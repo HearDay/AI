@@ -1,7 +1,7 @@
-# app/modules/open_questions.py
-
+from typing import List
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+
 from ..config import settings
 from ..prompt_templates import build_open_question_prompt, conversational_rewrite
 
@@ -24,8 +24,8 @@ def _load_llm():
 
 def _apply_chat_template(system: str, user: str) -> str:
     tok, _ = _load_llm()
-    if hasattr(tok, "apply_chat_template") and tok.chat_template:
-        messages = [{"role":"system","content":system},{"role":"user","content":user}]
+    if hasattr(tok, "apply_chat_template") and getattr(tok, "chat_template", None):
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         return tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     return f"<<SYS>>\n{system}\n<</SYS>>\n\n[USER]\n{user}\n[/USER]\n[ASSISTANT] "
 
@@ -43,24 +43,34 @@ def _generate(prompt: str) -> str:
         pad_token_id=tok.eos_token_id,
     )
     text = tok.decode(output_ids[0], skip_special_tokens=True)
+    # chat 템플릿 사용 시 prompt 이후가 모델 응답인 경우가 많음
     return text.split(prompt, 1)[-1].strip()
 
-def generate_open_questions(summary: str, level: str = "beginner") -> list[str]:
-    user_prompt = build_open_question_prompt(summary, level)
+def generate_open_questions(summary: str, level: str = "beginner") -> List[str]:
+    """
+    뉴스 요약과 레벨을 받아 개방형 질문 3개를 생성해 반환.
+    FastAPI 엔드포인트는 main.py에서 처리한다.
+    """
     system_prompt = "너는 뉴스 토론을 돕는 한국어 어시스턴트다. 사용자가 편하게 느끼는 자연스러운 대화 톤을 유지한다."
+    user_prompt = build_open_question_prompt(summary, level)
     full_prompt = _apply_chat_template(system_prompt, user_prompt)
 
     raw = _generate(full_prompt)
     raw = conversational_rewrite(raw)
 
+    # 라인 파싱(번호 붙은 형식 우선)
     lines = [l.strip() for l in raw.splitlines() if l.strip()]
-    qs = []
+    qs: List[str] = []
     for l in lines:
-        if l[:2].isdigit() and ")" in l:
+        # "1) ..." / "1." / "1）..." 등 다양한 케이스 커버
+        if (len(l) > 2 and l[:2].isdigit() and ")" in l):
             qs.append(l.split(")", 1)[-1].strip(" :"))
-        elif l and l[0].isdigit() and l[1] in (")", ".", "）"):
+        elif l and l[0].isdigit() and (len(l) > 1 and l[1] in (")", ".", "）")):
             qs.append(l[2:].strip(" :"))
-        if len(qs) == 3: break
+        if len(qs) == 3:
+            break
+
+    # 부족하면 기본 질문으로 채우기(UX용)
     if len(qs) < 3:
         fallback = [
             "지금 이 사안에서 가장 핵심적인 사실은 무엇이라고 보시나요?",
@@ -68,13 +78,7 @@ def generate_open_questions(summary: str, level: str = "beginner") -> list[str]:
             "당신이라면 어떤 대안을 먼저 시도해 보시겠어요?"
         ]
         qs = (qs + fallback)[:3]
+
+    # 끝문장 보정(물음표 보장)
     qs = [q.rstrip("?.") + "?" if not q.endswith("?") else q for q in qs]
     return qs
-
-@app.post("/prompt/open_questions")
-def prompt_open_questions(level: str = Form("beginner"), summary: str = Form(...)):
-    try:
-        questions = generate_open_questions(summary, level)
-    except Exception as e:
-        return {"level": level, "open_questions": [], "error": str(e)}
-    return {"level": level, "open_questions": questions}

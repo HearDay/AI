@@ -5,7 +5,7 @@ import torch
 from ..config import settings
 from ..prompt_templates import build_open_question_prompt, conversational_rewrite
 
-# ←← 전역 초기화 제거하고, 지연 로딩으로 전환
+# 전역 초기화 제거하고, 지연 로딩으로 전환
 _tokenizer = None
 _model = None
 
@@ -70,3 +70,11 @@ def generate_open_questions(summary: str, level: str = "beginner") -> list[str]:
         qs = (qs + fallback)[:3]
     qs = [q.rstrip("?.") + "?" if not q.endswith("?") else q for q in qs]
     return qs
+
+@app.post("/prompt/open_questions")
+def prompt_open_questions(level: str = Form("beginner"), summary: str = Form(...)):
+    try:
+        questions = generate_open_questions(summary, level)
+    except Exception as e:
+        return {"level": level, "open_questions": [], "error": str(e)}
+    return {"level": level, "open_questions": questions}

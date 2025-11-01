@@ -1,36 +1,63 @@
-import os
-import requests
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from typing import List, Dict
 
+
 class LLMClient:
-    """
-    1차 LLM만 사용. 실패/타임아웃 시 예외를 그대로 던진다(폴백 없음).
-    환경변수:
-      - PRIMARY_LLM_URL: LLM 엔드포인트 (필수)
-      - LLM_TIMEOUT: 요청 타임아웃(초), 기본 8
-    """
+   
+    # Kanana-1.5-2.1B-Instruct-2505 로컬 모델을 직접 호출하는 LLMClient
+
 
     def __init__(self):
-        self.primary_url = os.getenv("PRIMARY_LLM_URL", "")
-        self.timeout = float(os.getenv("LLM_TIMEOUT", "8"))
+        self.model_id = "kakaocorp/kanana-1.5-2.1b-instruct-2505"
 
-    def generate(self, messages: List[Dict[str, str]], max_tokens: int = 256, temperature: float = 0.3) -> str:
-        if not self.primary_url:
-            raise RuntimeError("PRIMARY_LLM_URL not set")
+        # 모델과 토크나이저 로드
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_id,
+            device_map="auto",
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            low_cpu_mem_usage=True,
+        )
 
-        try:
-            resp = requests.post(
-                self.primary_url,
-                json={
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # 엔드포인트 스펙에 따라 아래 두 가지를 지원
-            return data.get("text") or data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        except Exception as e:
-            raise RuntimeError(f"LLM primary failed: {e}") from e
+        # pipeline 초기화
+        self.generator = pipeline(
+            "text-generation",
+            model=self.model,
+            tokenizer=self.tokenizer,
+            max_new_tokens=256,
+            temperature=0.7,
+            repetition_penalty=1.1,
+        )
+
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 256,
+        temperature: float = 0.3,
+    ) -> str:
+        """
+        OpenAI Chat 형식(messages=[{role, content}, ...])을 받아
+        Kanana 모델에서 직접 추론.
+        """
+        # system/user/assistant 구조를 단일 프롬프트로 합침
+        prompt = ""
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                prompt += f"[시스템 지시]\n{content}\n\n"
+            elif role == "user":
+                prompt += f"[사용자]\n{content}\n\n"
+            elif role == "assistant":
+                prompt += f"[AI 응답]\n{content}\n\n"
+
+        # 실제 추론
+        output = self.generator(prompt, max_new_tokens=max_tokens, temperature=temperature)[0]["generated_text"]
+
+        # 프롬프트 이후의 생성문만 추출
+        if prompt in output:
+            output = output.split(prompt)[-1].strip()
+
+        return output.strip()
+

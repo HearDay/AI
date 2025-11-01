@@ -1,15 +1,8 @@
 from fastapi import APIRouter, Form
-from app.services.news_talk import make_question
+from app.modules.question_generator import generate_question
 
-router = APIRouter()
+router = APIRouter(prefix="/news_talk", tags=["news_talk"])
 
-@router.post("/ask")
-async def ask_news_talk(
-    summary: str = Form(...),
-    opinion: str = Form("")
-):
-    """
-    뉴스 요약 + 사용자 의견 → 탐구형 질문 생성
-    """
-    question = await make_question(summary, opinion)
-    return {"question": question}
+@router.post("/question")
+def make_news_question(level: str = Form("beginner"), context: str = Form(...)):
+    return {"question": generate_question(context, mode="open", level=level)}

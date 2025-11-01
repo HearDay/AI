@@ -24,27 +24,32 @@ class ResetReq(BaseModel):
 
 # ---------- 시스템 프롬프트 조립 ----------
 def make_system_prompt(level: str) -> str:
-    guide = LEVEL_GUIDES.get((level or "beginner").lower(), LEVEL_GUIDES["beginner"])
-    return (
-        "너는 뉴스 토론 파트너다.\n"
-        f"{CONVERSATIONAL_STYLE}\n"
-        f"{guide}\n"
-        "[작업]\n"
-        "- 사용자의 질문에 자연스럽게 응답하고,\n"
-        "- 맥락을 기억하며, 필요하면 반문이나 탐구형 질문을 덧붙인다.\n"
-    )
+    lvl = (level or "beginner").lower()
+    guide = LEVEL_GUIDES.get(lvl, LEVEL_GUIDES["beginner"])
+    return f"""너는 뉴스 토론 파트너다.
+{CONVERSATIONAL_STYLE}
+{guide}
+
+[작업]
+- 사용자의 메시지를 읽고, 자연스럽게 대화하듯 응답하라.
+- 필요하면 짧은 피드백 한 문장 뒤에 탐구형 질문을 한 문장 덧붙여라.
+- 라벨, 번호, 목록 없이 사람 말투로 바로 시작하라.
+- "~할까요?", "~보시나요?" 등의 자연스러운 어미 사용.
+"""
 
 # ---------- 엔드포인트 ----------
 @router.post("/chat")
 def chat(req: ChatReq):
     try:
-        system_prompt = make_system_prompt(req.level or "beginner")
-        
+        system_prompt = make_system_prompt(req.level)
         agent = get_agent(req.user_id, req.session_id, system_prompt)
         result = safe_chat(agent, req.message)
-        return {"answer": result["answer"], "used_memory": True, "fallback": result["fallback"]}
+        return {
+            "answer": result["answer"],
+            "used_memory": True,
+            "fallback": result["fallback"]
+        }
     except RuntimeError as e:
-        # MemGPT 미설치/임포트 실패 → 503로 안내
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"chat error: {e}")
@@ -52,7 +57,7 @@ def chat(req: ChatReq):
 @router.post("/chat/reset")
 def chat_reset(req: ResetReq):
     try:
-        system_prompt = make_system_prompt(req.level or "beginner")
+        system_prompt = make_system_prompt(req.level)
         reset_agent(req.user_id, req.session_id, system_prompt)
         return {"ok": True}
     except RuntimeError as e:

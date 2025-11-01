@@ -1,19 +1,18 @@
 from fastapi import FastAPI, Form
-
-# 기존 프롬프트/오픈질문 모듈
 from app.prompt_templates import build_open_question_prompt
-from app.modules.open_questions import generate_open_questions
+from app.modules.question_generator import generate_question  # 통합 모듈 import
 
-# 새로 추가된 라우터 (요약 + 피드백)
+# 라우터들 추가
 from app.routers import feedback as feedback_router
 from app.routers import summary as summary_router
 from app.routers.chat import router as chat_router
+from app.routers import news_talk as news_talk_router
 
 
 # ---------------------------------------
 # 앱 초기화
 # ---------------------------------------
-app = FastAPI(title="Debate Prompt & Open Questions", version="0.2.0")
+app = FastAPI(title="Debate Prompt & Question Generator", version="0.3.0")
 
 
 # ---------------------------------------
@@ -25,20 +24,36 @@ def health():
 
 
 # ---------------------------------------
-# 기존 prompt endpoints
+# 질문 관련 엔드포인트
 # ---------------------------------------
+
 @app.post("/prompt/preview")
 def prompt_preview(level: str = Form("beginner"), summary: str = Form(...)):
+    """
+    프롬프트 미리보기 (탐구형 질문용)
+    """
     return {"level": level, "prompt": build_open_question_prompt(summary, level)}
 
 
-@app.post("/prompt/open_questions")
-def prompt_open_questions(level: str = Form("beginner"), summary: str = Form(...)):
-    return {"level": level, "open_questions": generate_open_questions(summary, level)}
+@app.post("/prompt/question")
+def prompt_question(
+    mode: str = Form("open"),  # open or followup
+    level: str = Form("beginner"),
+    context: str = Form(...),
+):
+    """
+    LLM 기반 질문 생성 
+    """
+    question = generate_question(context, mode=mode, level=level)
+    return {
+        "mode": mode,
+        "level": level,
+        "question": question
+    }
 
 
 # ---------------------------------------
-# 새로 추가한 기능
+# 추가 기능 라우터 등록
 # ---------------------------------------
 # 후속질문/피드백
 app.include_router(feedback_router.router)
@@ -48,3 +63,6 @@ app.include_router(summary_router.router)
 
 # 기존 chat 라우터
 app.include_router(chat_router)
+
+# 뉴스 기반 대화형 질문
+app.include_router(news_talk_router.router)

@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
+
+# 피드백 / 요약 / 키워드 스키마
 
 class FeedbackIn(BaseModel):
     user_id: str = "demo"
@@ -31,3 +33,19 @@ class KeywordsIn(BaseModel):
 
 class KeywordsOut(BaseModel):
     keywords: List[str]
+
+# 토론용 AI api
+class PromptQuestionIn(BaseModel):
+    discussionId: Optional[int] = None
+    nickname: Optional[str] = None
+    articleTitle: Optional[str] = None
+    content: str
+    previousMessages: Optional[List[Dict[str, str]]] = []
+    message: Optional[str] = None
+    mode: Literal["open_question", "followup"] = "open_question"
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
+
+class PromptQuestionOut(BaseModel):
+    question: str
+    mode: str
+    level: str

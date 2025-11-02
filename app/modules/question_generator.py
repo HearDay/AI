@@ -3,9 +3,7 @@ from app.prompt_templates import CONVERSATIONAL_STYLE, LEVEL_GUIDES
 
 
 def _extract_keywords(text: str, top_k: int = 5):
-  
-   # 간단한 핵심 단어 추출
-    
+    """간단한 핵심 단어 추출"""
     words = [w.strip(",.!?") for w in text.split() if len(w) > 1]
     seen = []
     for w in words:
@@ -16,17 +14,17 @@ def _extract_keywords(text: str, top_k: int = 5):
     return seen
 
 
-def generate_question(context: str, mode: str = "open", level: str = "beginner") -> str:
+def generate_question(context: str, mode: str = "open_question", level: str = "beginner") -> str:
     """
-    Kanana 기반 질문 생성기 (open / followup 통합)
-    mode: 'open' (토론 시작용) or 'followup' (응답 후속용)
+    Kanana 기반 질문 생성기 (open_question / followup 통합)
+    mode: 'open_question' (토론 시작용) or 'followup' (응답 후속용)
     """
     guide = LEVEL_GUIDES.get(level, LEVEL_GUIDES["beginner"])
     keywords = _extract_keywords(context)
     hint = ", ".join(keywords)
 
-    # 시스템 프롬프트 구성
-    if mode == "open":
+    # --- 프롬프트 분기 ---
+    if mode in ("open", "open_question"):
         system_prompt = f"""너는 뉴스 토론 파트너다.
 {CONVERSATIONAL_STYLE}
 {guide}
@@ -34,6 +32,7 @@ def generate_question(context: str, mode: str = "open", level: str = "beginner")
 [작업]
 - {hint}와 관련된 자연스러운 개방형 질문을 한 문장으로 생성하라.
 - 과장/명령 금지, "~어떨까요?" "~보시나요?" 형태 허용.
+- 문장 앞뒤에 불필요한 부호나 번호를 붙이지 말 것.
 """
         user_prompt = f"[뉴스 요약] {context}"
 
@@ -46,14 +45,12 @@ def generate_question(context: str, mode: str = "open", level: str = "beginner")
 - 사용자의 발언을 읽고, 공감 한 문장 + {hint} 관련 후속 질문 한 문장.
 - 전체 2문장 이하로 말하라.
 - "~할까요?" "~어떨까요?" "~보시나요?" 형태 허용.
-- 질문이나 피드백은 사람처럼 대화하듯 자연스럽게 말하라.
-- 라벨, 구분자, 번호를 붙이지 말고 한 문장으로 바로 시작하라.
-- 예: "좋은 포인트예요. 그렇다면~" 처럼 바로 말하라.
+- 라벨, 구분자, 번호를 붙이지 말고 바로 말하라.
 """
         user_prompt = f"[대화 내용] {context}"
 
     else:
-        raise ValueError("mode must be 'open' or 'followup'")
+        raise ValueError("mode must be 'open_question' or 'followup'")
 
     messages = [
         {"role": "system", "content": system_prompt},

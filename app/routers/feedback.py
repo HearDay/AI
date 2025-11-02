@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from app.schemas import FeedbackIn, FeedbackOut
+from app.schemas import FeedbackIn
 from app.modules.question_generator import generate_question
 from app.core.memgpt_client import MemGPTClient
 
@@ -7,7 +7,7 @@ router = APIRouter(prefix="/feedback", tags=["feedback"])
 
 _mem = MemGPTClient()  # 세션 기반 대화 기억 유지용
 
-@router.post("", response_model=FeedbackOut)
+@router.post("")
 def create_feedback(payload: FeedbackIn):
     """
     사용자 답변 기반 후속 피드백/질문 생성 (대화 맥락 유지)
@@ -37,12 +37,13 @@ def create_feedback(payload: FeedbackIn):
         })
 
         # 5. 최종 응답 반환
-        return FeedbackOut(
-            user_id=payload.user_id,
-            question=payload.question,
-            user_answer=payload.user_answer,
-            feedback=feedback_text
-        )
+        return {
+            "reply": feedback_text,
+            "mode": "followup",
+            "level": payload.level,
+            "question": payload.question,
+            "user_answer": payload.user_answer
+        }
 
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"LLM or memory error: {e}")

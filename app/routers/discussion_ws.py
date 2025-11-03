@@ -1,9 +1,11 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.modules.question_generator import generate_question
 from app.modules.voice_service import text_to_speech
+from app.modules.guardrail_service import content_filter, relevance_check
 import json
 import asyncio
 import base64
+import os
 
 router = APIRouter(prefix="/ws", tags=["discussion"])
 
@@ -15,36 +17,45 @@ async def discussion_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # 클라이언트로부터 데이터 수신
             data = await websocket.receive_text()
             payload = json.loads(data)
 
-            # 메시지 파싱
             user_message = payload.get("message", "")
             level = payload.get("level", "beginner")
 
-            # LLM 호출 (질문 생성 or 후속 대화)
+            # LLM 호출
             llm_reply = generate_question(user_message, mode="followup", level=level)
 
-            # Google Cloud TTS 변환 (mp3 파일 경로 반환)
+            # 가드레일 필터
+            is_safe, reason = content_filter(llm_reply)
+            if not is_safe:
+                llm_reply = reason
+
+            # 관련성 검증
+            if not relevance_check(user_message, llm_reply):
+                llm_reply += " (⚠️ 주제와 관련이 적은 응답일 수 있습니다.)"
+
+            # Google TTS 변환 (mp3 파일 경로 반환)
             tts_path = text_to_speech(llm_reply)
 
-            # mp3 파일 읽어서 Base64 인코딩
+            # 5️⃣ 파일 읽어서 Base64 변환
             with open(tts_path, "rb") as f:
                 tts_base64 = base64.b64encode(f.read()).decode("utf-8")
 
-            # 클라이언트로 보낼 응답 데이터
             response = {
                 "type": "reply",
                 "reply": llm_reply,
-                "tts_audio": tts_base64  # 클라이언트에서 바로 재생 가능
+                "tts_audio": tts_base64
             }
 
-            # JSON 직렬화 후 WebSocket으로 전송
             await websocket.send_text(json.dumps(response))
-
-            # 서버 안정화용 짧은 대기
             await asyncio.sleep(0.1)
+
+            # 임시 파일 삭제 (테스트용입니다)
+            try:
+                os.remove(tts_path)
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         print("WebSocket 연결 종료됨")

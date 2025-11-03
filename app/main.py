@@ -7,6 +7,7 @@ from app.routers import feedback as feedback_router
 from app.routers import summary as summary_router
 from app.routers.chat import router as chat_router
 from app.routers import news_talk as news_talk_router
+from app.routers import discussion_ws as discussion_router
 
 
 # ---------------------------------------
@@ -69,3 +70,6 @@ app.include_router(news_talk_router.router)
 
 # TTS, STT 지원
 app.include_router(voice.router)
+
+# 웹소켓 
+app.include_router(discussion_router.router)

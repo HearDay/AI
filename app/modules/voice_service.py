@@ -1,9 +1,11 @@
 import io
+import os
+import tempfile
 from google.cloud import speech, texttospeech
 
 # GCP 인증 파일 경로 지정
-import os
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "app/core/gcp_key.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "app/core/hearday-4b26b1f78a13.json"
+
 
 # STT (음성 -> 텍스트)
 def speech_to_text(audio_bytes: bytes) -> str:
@@ -21,7 +23,14 @@ def speech_to_text(audio_bytes: bytes) -> str:
 
 
 # TTS (텍스트 -> 음성)
-def text_to_speech(text: str) -> bytes:
+def text_to_speech(text: str) -> str:
+    """
+    Google Cloud TTS 기반
+    반환값: mp3 파일 경로(str)
+    """
+    if not text or text.isspace():
+        raise ValueError("텍스트가 비어 있습니다.")
+
     client = texttospeech.TextToSpeechClient()
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
@@ -29,7 +38,16 @@ def text_to_speech(text: str) -> bytes:
         name="ko-KR-Neural2-B"
     )
     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+
+    # 응답 받기
     response = client.synthesize_speech(
         input=synthesis_input, voice=voice, audio_config=audio_config
     )
-    return response.audio_content
+
+    # 임시 mp3 파일 생성
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tmp_file.write(response.audio_content)
+    tmp_file.close()
+
+    # 파일 경로 반환
+    return tmp_file.name

@@ -8,7 +8,7 @@ class KeywordExtractor:
         print("키워드 추출 모델을 로드합니다...")
         self.classifier = pipeline(
             "zero-shot-classification", 
-            model="klue/roberta-large"
+            model="pongjin/roberta_with_kornli"
         )
         print("모델 로드가 완료되었습니다.")
 
@@ -24,8 +24,15 @@ class KeywordExtractor:
         if not text or not candidate_keywords:
             return []
             
-        # 모델을 사용하여 분류 작업 수행
-        result = self.classifier(text, candidate_keywords, multi_label=True)
+        # AI가 "이 텍스트는 {키워드}에 관한 것입니다." 라는 한국어 문장으로 추론하도록 템플릿을 지정합니다.
+        hypothesis_template = "이 텍스트는 {}에 관한 것입니다."
+
+        result = self.classifier(
+            text, 
+            candidate_keywords, 
+            hypothesis_template=hypothesis_template, 
+            multi_label=True
+        )
         
         # 결과에서 상위 k개의 레이블(키워드)만 추출하여 반환
         top_keywords = result['labels'][:top_k]

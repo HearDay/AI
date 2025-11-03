@@ -38,7 +38,7 @@ async def discussion_endpoint(websocket: WebSocket):
             # Google TTS 변환 (mp3 파일 경로 반환)
             tts_path = text_to_speech(llm_reply)
 
-            # 5️⃣ 파일 읽어서 Base64 변환
+            # 파일 읽어서 Base64 변환
             with open(tts_path, "rb") as f:
                 tts_base64 = base64.b64encode(f.read()).decode("utf-8")
 

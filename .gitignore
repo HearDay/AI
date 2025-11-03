@@ -14,5 +14,10 @@ Thumbs.db
 cache/
 huggingface/
 AI/
+# Key
+app/core/hearday-4b26b1f78a13.json
+hearday-api-key.json
+*.json
+
 
 # desc: 불필요한 캐시/환경파일(.env) 등 Git 추적 제외 목록 설정.

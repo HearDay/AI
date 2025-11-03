@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Form
 from app.prompt_templates import build_open_question_prompt
-from app.modules.question_generator import generate_question  # 통합 모듈 import
+from app.modules.question_generator import generate_question
+from app.routers import voice
 
-# 라우터들 추가
 from app.routers import feedback as feedback_router
 from app.routers import summary as summary_router
 from app.routers.chat import router as chat_router
@@ -66,3 +66,6 @@ app.include_router(chat_router)
 
 # 뉴스 기반 대화형 질문
 app.include_router(news_talk_router.router)
+
+# TTS, STT 지원
+app.include_router(voice.router)

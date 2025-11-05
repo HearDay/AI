@@ -1,24 +1,21 @@
 import re
 from typing import Tuple
+from konlpy.tag import Okt
 
-# 기본 금칙어 리스트 (추후 확장 가능)
-BANNED_WORDS = ["욕설", "비속어", "개인정보", "신상"]
+#금칙어, 추후 확장 가능
+
+_okt = Okt() 
+BANNED_WORDS = ["욕설", "비속어", "개인정보", "신상"] 
 
 def content_filter(text: str) -> Tuple[bool, str]:
-    """
-    응답 내용에서 부적절한 단어 탐지
-    반환: (is_safe, reason)
-    """
     for word in BANNED_WORDS:
-        if re.search(word, text):
+        if re.search(rf"\b{re.escape(word)}\b", text):
             return False, f"⚠️ 부적절한 표현이 감지되었습니다: '{word}'"
     return True, ""
 
-def relevance_check(user_message: str, llm_reply: str) -> bool:
-    """
-    사용자의 입력과 LLM 응답의 의미적 관련성 간단 검증
-    """
-    user_keywords = set(user_message.lower().split())
-    reply_keywords = set(llm_reply.lower().split())
-    overlap = len(user_keywords & reply_keywords)
-    return overlap > 1  # 키워드가 1개 이상 겹치면 관련 있다고 판단
+def relevance_check(user_message: str, llm_reply: str) -> Tuple[bool, str]:
+    user_keywords = set(_okt.nouns(user_message))
+    reply_keywords = set(_okt.nouns(llm_reply))
+    if len(user_keywords & reply_keywords) < 2:
+        return False, "의미적 관련성이 낮습니다."
+    return True, ""

@@ -1,10 +1,8 @@
 import re
 from typing import Tuple
-from konlpy.tag import Okt
 
 #금칙어, 추후 확장 가능
 
-_okt = Okt() 
 BANNED_WORDS = ["욕설", "비속어", "개인정보", "신상"] 
 
 def content_filter(text: str) -> Tuple[bool, str]:

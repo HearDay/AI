@@ -1,29 +1,28 @@
-# app/memgpt_agent.py
 from typing import Any, Dict, Tuple, Optional
 
 # -----------------------------------------------------------
 # MemGPT 다중 경로 임포트 (버전별 구조 차이 대응)
 # -----------------------------------------------------------
-Agent = None
-MemoryStore = None
-_get_provider = None
+Agent: Optional[Any] = None
+MemoryStore: Optional[Any] = None
+_get_provider: Optional[Any] = None
 _memgpt_import_error: Optional[Exception] = None
 
 try:
-    from memgpt.agent import Agent
-    from memgpt.memory import MemoryStore
-    from memgpt.providers import get_provider as _get_provider
-except Exception as e1:
+    from memgpt.agent import Agent  # type: ignore
+    from memgpt.memory import MemoryStore  # type: ignore
+    from memgpt.providers import get_provider as _get_provider  # type: ignore
+except ImportError as e1:
     try:
-        from memgpt.agent.agent import Agent
-        from memgpt.memory.memory import MemoryStore
-        from memgpt.providers import get_provider as _get_provider
-    except Exception as e2:
+        from memgpt.agent.agent import Agent  # type: ignore
+        from memgpt.memory.memory import MemoryStore  # type: ignore
+        from memgpt.providers import get_provider as _get_provider  # type: ignore
+    except ImportError as e2:
         try:
-            from memgpt.core.agent import Agent
-            from memgpt.core.memory import MemoryStore
-            from memgpt.core.providers import get_provider as _get_provider
-        except Exception as e3:
+            from memgpt.core.agent import Agent  # type: ignore
+            from memgpt.core.memory import MemoryStore  # type: ignore
+            from memgpt.core.providers import get_provider as _get_provider  # type: ignore
+        except ImportError as e3:
             _memgpt_import_error = e3
 
 
@@ -42,8 +41,8 @@ def ensure_memgpt() -> None:
 # -----------------------------------------------------------
 # MemGPT 런타임 초기화 및 관리
 # -----------------------------------------------------------
-_PROVIDER = None
-_MEMORY_STORE = None
+_PROVIDER: Optional[Any] = None
+_MEMORY_STORE: Optional[Any] = None
 _AGENTS: Dict[Tuple[str, str], Any] = {}
 
 

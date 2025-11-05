@@ -1,12 +1,19 @@
-# Virtual Environment
-venv/
-.venv/
-env/
-
-# Python cache
 __pycache__/
 *.pyc
-
-# IDE settings
+.venv/
+venv/
+.env
+.env.*
+# OS / IDE
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
+# Hugging Face / 캐시
+cache/
+huggingface/
+AI/
+# Key
+app/core/hearday-4b26b1f78a13.json
+hearday-api-key.json
+*.json

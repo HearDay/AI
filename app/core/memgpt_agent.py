@@ -1,4 +1,11 @@
 from typing import Any, Dict, Tuple, Optional
+import sys, os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MEMGPT_PATH = os.path.join(BASE_DIR, "MemGPT")
+if MEMGPT_PATH not in sys.path:
+    sys.path.append(MEMGPT_PATH)
+
 
 # -----------------------------------------------------------
 # MemGPT 다중 경로 임포트 (버전별 구조 차이 대응)

@@ -1,145 +1,160 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import joinedload
 from typing import List, Optional
 from pydantic import BaseModel, Field
-import datetime
 
-# DB, 모델, 서비스 모듈 임포트
+# 👇👇👇 이 부분을 수정합니다! (models.models -> app.models.document)
 from app.core.database import get_db
-from app.models.document import Document as DocumentModel
+from app.models.document import Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector
 from app.services.keyword_extractor import keyword_extractor
-from app.services.analysis_service import analysis_service # Faiss가 적용된 서비스
+from app.services.analysis_service import analysis_service
 
-# --- Pydantic 스키마 (API 입출력 형식 정의) ---
+router = APIRouter(
+    tags=["AI Recommendation"]    
+)
 
-# [참고]
-# app/models/document.py 파일도 백엔드에서 받는 데이터에 맞춰
-# article_id, original_url, published_at, title, category 컬럼이
-# 추가되어 있어야 합니다!
-
-class DocumentCreate(BaseModel):
-    """
-    백엔드(크롤러)로부터 받을 데이터의 형식
-    """
-    article_id: str = Field(..., description="뉴스 원본의 고유 ID")
-    original_url: str = Field(..., description="뉴스 원본 URL")
-    published_at: datetime.datetime = Field(..., description="발행 시간")
-    title: str = Field(..., description="기사 제목")
-    text: str = Field(..., description="기사 본문")
-    category: str = Field(..., description="뉴스 사이트의 원본 카테고리")
-
-class DocumentResponse(BaseModel):
-    """
-    API가 성공적으로 문서를 생성한 후 반환할 데이터 형식
-    """
-    id: int # 우리 DB의 고유 ID
-    article_id: str
-    title: str
-    keywords: Optional[List[str]] = None
-    
-    class Config:
-        from_attributes = True # SQLAlchemy 모델 -> Pydantic 변환
-
-class SimilarDocumentResponse(BaseModel):
-    """
-    유사 문서 조회 시 반환할 데이터 형식
-    """
-    doc: DocumentResponse
-    score: float
-
-# --- APIRouter 객체 생성 ---
-router = APIRouter()
-
-# --- 표준 카테고리 목록 (AI 서버가 내부적으로 관리) ---
-# LLM 키워드 추출을 위한 표준 '보기' 목록
 STANDARD_CANDIDATES = [
-    "인공지능", "IT", "기술", "과학", "경제", "경영", 
-    "사회", "정치", "국제", "스포츠", "연예", "문화",
-    "농구", "축구", "야구", "반도체", "구글", "애플", "삼성전자"
+    "경제",
+    "방송 / 연예",
+    "IT",
+    "쇼핑",
+    "생활",
+    "해외",
+    "스포츠",
+    "정치"
 ]
 
-
-# --- API 엔드포인트 정의 ---
+class ArticleResponse(BaseModel):
+    id: int
+    title: str
+    origin_link: str
+    
+    class Config:
+        from_attributes = True
 
 @router.post(
-    "/documents", 
-    response_model=DocumentResponse, 
-    status_code=status.HTTP_201_CREATED,
-    summary="새 문서 생성, 분석 및 인덱싱"
+    "/process/article/{article_id}", 
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="[백엔드용] 기사 ID를 받아 AI 분석 및 인덱싱"
 )
-async def create_document(
-    request: DocumentCreate,
+async def process_document_by_id(
+    article_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    백엔드로부터 새 기사 정보를 받아 중복 여부를 확인한 후,
-    LLM 키워드 추출, SBERT 벡터화를 수행하고 DB 및 Faiss 인덱스에 저장합니다.
-    """
     
-    # 1. 중복 기사 확인 (가장 중요한 방어 로직)
-    # article_id (뉴스 고유 ID)를 기준으로 이미 저장되었는지 확인
-    query = select(DocumentModel).where(DocumentModel.article_id == request.article_id)
+    query = select(Article).options(joinedload(Article.recommend))\
+            .where(Article.id == article_id)
     result = await db.execute(query)
-    existing_document = result.scalars().first()
+    article = result.scalars().first()
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Article을 찾을 수 없습니다.")
+    if not article.recommend:
+        raise HTTPException(status_code=404, detail="ArticleRecommend 레코드가 연결되지 않았습니다.")
+
+    reco = article.recommend
     
-    if existing_document:
-        # 이미 처리된 기사라면, 200 OK와 함께 기존 정보를 반환
-        return existing_document
+    if reco.status == 'COMPLETED':
+        return {"message": "이미 처리된 기사입니다."}
+    if reco.status == 'PROCESSING':
+        return {"message": "현재 처리 중인 기사입니다."}
 
-    # 2. LLM 키워드 추출 (표준 카테고리 사용)
-    # 원본 카테고리 + 표준 목록을 합쳐서 후보로 사용할 수도 있습니다.
-    # 여기서는 간단하게 표준 목록만 사용합니다.
-    keywords = keyword_extractor.extract(request.text, STANDARD_CANDIDATES) 
-    
-    # 3. SBERT 벡터 생성 (ndarray 반환)
-    sbert_vector_np = analysis_service.encode_text(request.text)
-    sbert_vector_list = sbert_vector_np.tolist() # DB 저장을 위해 list로 변환
-
-    # 4. DB에 저장할 객체 생성
-    new_document = DocumentModel(
-        article_id=request.article_id,
-        original_url=request.original_url,
-        published_at=request.published_at,
-        title=request.title,
-        text=request.text,
-        category=request.category,
-        keywords=keywords,
-        sbert_vector=sbert_vector_list
-    )
-
-    # 5. DB에 저장
-    db.add(new_document)
+    reco.status = 'PROCESSING'
     await db.commit()
-    await db.refresh(new_document) # DB ID(new_document.id)를 확정받음
-    
-    # 6. Faiss 인덱스에 실시간 추가
-    await analysis_service.add_document_to_index(
-        doc_id=new_document.id, 
-        vector_list=sbert_vector_list
-    )
-    
-    # 201 Created 상태 코드와 함께 새로 생성된 정보를 반환
-    return new_document
+
+    try:
+        keywords_list = keyword_extractor.extract(article.description, STANDARD_CANDIDATES)
+        sbert_vector_np = analysis_service.encode_text(article.description)
+        sbert_vector_list = sbert_vector_np.tolist() 
+
+        await db.execute(
+            ArticleRecommendKeyword.__table__.delete()\
+            .where(ArticleRecommendKeyword.article_recommend_id == reco.id)
+        )
+        
+        for kw in keywords_list:
+            db.add(ArticleRecommendKeyword(article_recommend_id=reco.id, keyword=kw))
+        
+        await db.execute(
+            ArticleRecommendVector.__table__.delete()\
+            .where(ArticleRecommendVector.article_recommend_id == reco.id)
+        )
+        
+        db.add(ArticleRecommendVector(
+            article_recommend_id=reco.id, 
+            sbert_vector=sbert_vector_list
+        ))
+
+        reco.status = 'COMPLETED'
+        
+        await db.commit()
+        await db.refresh(reco)
+        
+        await analysis_service.add_document_to_index(
+            reco_id=reco.id, 
+            vector_list=sbert_vector_list
+        )
+        
+        return {"message": "AI 분석 및 인덱싱 완료", "recommend_id": reco.id}
+
+    except Exception as e:
+        reco.status = 'FAILED'
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"AI 분석 중 오류 발생: {str(e)}")
+
 
 @router.get(
-    "/documents/{doc_id}/similar", 
-    response_model=List[SimilarDocumentResponse], 
-    summary="유사 문서 조회 (Faiss 사용)"
+    "/similar/article/{article_id}", 
+    response_model=List[ArticleResponse], 
+    summary="[SBERT 추천] 특정 기사와 유사한 기사 추천 (Faiss)"
 )
-async def get_similar_documents(
-    doc_id: int,
+async def get_similar_articles(
+    article_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    특정 문서(doc_id)와 의미적으로 가장 유사한 문서들을
-    Faiss 인덱스에서 초고속으로 검색하여 반환합니다.
-    """
     
-    # Faiss 검색 로직은 모두 analysis_service 내부에 숨겨져 있습니다.
-    similar_docs = await analysis_service.find_similar_documents(db, doc_id)
+    similar_article_ids = await analysis_service.find_similar_documents(db, article_id)
     
-    if similar_docs is None:
-        raise HTTPException(status_code=404, detail="해당 ID의 문서를 찾을 수 없거나 벡터가 없습니다.")
+    if not similar_article_ids:
+        return []
+    
+    query = select(Article).where(Article.id.in_(similar_article_ids))
+    result = await db.execute(query)
+    articles = result.scalars().all()
         
-    return similar_docs
+    return articles
+
+
+@router.get(
+    "/category/{category_name}", 
+    response_model=List[ArticleResponse], 
+    summary="[LLM 추천] 특정 카테고리 기사 목록 (콜드 스타트용)"
+)
+async def get_documents_by_category(
+    category_name: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    
+    query = (
+        select(Article)
+        .join(Article.recommend)
+        .join(ArticleRecommend.keywords)
+        .where(ArticleRecommendKeyword.keyword == category_name)
+        .where(ArticleRecommend.status == 'COMPLETED')
+        .order_by(Article.publish_date.desc())
+        .limit(limit)
+    )
+    
+    result = await db.execute(query)
+    articles = result.scalars().unique().all()
+    
+    if not articles:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"'{category_name}' 카테고리의 기사를 찾을 수 없습니다."
+        )
+        
+    return articles

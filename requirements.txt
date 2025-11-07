@@ -1,12 +1,8 @@
-fastapi
-uvicorn[standard]
-
 # Hugging Face / 모델 추론
 transformers>=4.43.0
 accelerate
 safetensors
 sentencepiece
-torch
 
 # STT / TTS
 SpeechRecognition
@@ -14,3 +10,23 @@ gTTS
 
 # Form 데이터 업로드용
 python-multipart
+# FastAPI 및 서버
+fastapi
+uvicorn[standard]
+pydantic-settings
+
+# DB 연결 (MySQL)
+sqlalchemy
+aiomysql
+PyMySQL
+
+# AI 모델 (SBERT, LLM)
+sentence-transformers
+transformers
+
+# AI 모델 실행기 (PyTorch)
+# (torch는 용량이 크므로, CPU 버전을 명시할 수 있습니다)
+torch 
+
+# 벡터 검색
+faiss-cpu

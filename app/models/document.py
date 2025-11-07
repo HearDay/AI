@@ -1,49 +1,72 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Index, Enum
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
+import enum
 
-# 백엔드의 ArticleDetail은 복잡하니, 일단 ID만 매핑합니다.
-# from sqlalchemy import ForeignKey
-# from sqlalchemy.orm import relationship
-
-class Document(Base):
-    __tablename__ = "article " 
-
-    # --- 백엔드 팀이 정의한 컬럼 ---
-    # 백엔드의 'id' (Long) -> 파이썬의 'id' (Integer)
+# --- 1. 백엔드가 관리하는 'Article' 테이블 ---
+# (우리는 이 테이블을 읽기만 합니다)
+class Article(Base):
+    __tablename__ = "article"
+    
     id = Column(Integer, primary_key=True, index=True)
-    
-    # 'origin_link' (DB) -> 'original_url' (Python)
-    original_url = Column(String(2083), name="origin_link", nullable=False)
-    
-    # 'publish_data' (DB) -> 'published_at' (Python)
-    # (참고: Java 코드에서는 publishDate였는데, 목록에서는 publish_data네요.
-    #  DB 컬럼명인 publish_data로 매핑합니다.)
-    published_at = Column(DateTime(timezone=True), name="publish_data", nullable=False)
-    
-    # 'title' (DB) -> 'title' (Python)
-    title = Column(Text, nullable=False)
-    
-    # 'description' (DB) -> 'text' (Python)
-    # (우리가 text로 사용하던 본문입니다)
-    text = Column(Text, name="description", nullable=False)
-    
-    # 'article_category' (DB) -> 'category' (Python)
-    category = Column(String(100), name="article_category", index=True)
-    
-    # 매핑할 다른 컬럼들
-    image_url = Column(String(2083))
-    article_detail_id = Column(Integer) # (일단 Integer로 매핑)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    article_category = Column(String(100))
+    description = Column(Text, nullable=False) # (기사 본문)
+    image_url = Column(String(2083))
+    origin_link = Column(String(2083), nullable=False)
+    publish_date = Column(DateTime(timezone=True), nullable=False)
+    title = Column(Text, nullable=False)
+    
+    # 1:1 관계 (Article <-> ArticleDetail) - 백엔드 스키마에 따름
+    article_detail_id = Column(Integer, ForeignKey("article_detail.id")) # (가정: article_detail 테이블이 존재)
+    
+    # 1:1 관계 (Article <-> ArticleRecommend)
+    article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
+    recommend = relationship("ArticleRecommend", back_populates="article", uselist=False)
 
-    # --- AI 서버가 추가할 컬럼 (★백엔드 팀이 DB에 추가해야 함★) ---
-    keywords = Column(JSON)
-    sbert_vector = Column(JSON)
-    status = Column(String(50), default='PENDING', index=True, nullable=False)
+# --- 2. AI가 관리하는 'ArticleRecommend' (작업 상태) ---
+class ArticleRecommend(Base):
+    __tablename__ = "article_recommend"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Enum/String 타입으로 상태 관리
+    status = Column(String(50), default='PENDING', index=True, nullable=False) 
+    
+    # 1:1 관계 (Article 테이블에서 이 레코드를 참조)
+    article = relationship("Article", back_populates="recommend", uselist=False)
+    
+    # 1:N 관계 (이 레코드는 여러 개의 키워드를 가짐)
+    keywords = relationship("ArticleRecommendKeyword", back_populates="recommend")
+    
+    # 1:1 관계 (이 레코드는 하나의 벡터를 가짐)
+    vector = relationship("ArticleRecommendVector", back_populates="recommend", uselist=False)
 
-    # --- 인덱스 설정 ---
-    __table_args__ = (
-        # 'origin_link' 컬럼을 기준으로 고유 인덱스 생성
-        Index('uq_origin_link_prefix', 'origin_link', unique=True, mysql_length=255),
-    )
+# --- 3. AI가 관리하는 'ArticleRecommendKeyword' (LLM 키워드) ---
+class ArticleRecommendKeyword(Base):
+    __tablename__ = "article_recommend_keywords"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    keyword = Column(String(100), index=True)
+    
+    # N:1 관계 (키워드는 하나의 Recommend 레코드에 속함)
+    article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
+    recommend = relationship("ArticleRecommend", back_populates="keywords")
+
+# --- 4. AI가 관리하는 'ArticleRecommendVector' (SBERT 벡터) ---
+class ArticleRecommendVector(Base):
+    __tablename__ = "article_recommend_vector"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sbert_vector = Column(JSON, nullable=False) # 벡터는 JSON 타입으로 저장
+    
+    # 1:1 관계 (벡터는 하나의 Recommend 레코드에 속함)
+    article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
+    recommend = relationship("ArticleRecommend", back_populates="vector")
+
+# (참고: 백엔드 스키마에 'article_detail' 테이블이 언급되어 있으나, AI 분석에는 필요하지 않아 정의하지 않았습니다.)
+# (또한, AWS RDS 테이블 자동 생성을 위해 main.py가 이 파일을 임포트해야 합니다)

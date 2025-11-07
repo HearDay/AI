@@ -1,7 +1,6 @@
 import faiss                   # 1. Faiss 임포트
 import numpy as np             # 2. Numpy 임포트
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity # 3. (이제 삭제해도 됩니다)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 

@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+
+# Hugging Face / 모델 추론
+transformers>=4.43.0
+accelerate
+safetensors
+sentencepiece
+torch
+
+# STT / TTS
+SpeechRecognition
+gTTS
+
+# Form 데이터 업로드용
+python-multipart

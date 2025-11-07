@@ -5,33 +5,36 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 import datetime
 
-# DB, 모델, 서비스 모듈 임포트
+# --- 핵심 모듈 임포트 ---
 from app.core.database import get_db
 from app.models.document import Document as DocumentModel
 from app.services.keyword_extractor import keyword_extractor
 from app.services.analysis_service import analysis_service # Faiss가 적용된 서비스
 
-# --- Pydantic 스키마 (API 입출력 형식 정의) ---
+# --- APIRouter 객체 생성 ---
+router = APIRouter(
+    prefix="/documents",  
+    tags=["Documents"]    
+)
 
-# [참고]
-# app/models/document.py 파일도 백엔드에서 받는 데이터에 맞춰
-# article_id, original_url, published_at, title, category 컬럼이
-# 추가되어 있어야 합니다!
+# --- LLM 키워드 추출을 위한 표준 '보기' 목록 ---
+STANDARD_CANDIDATES = [
+    "경제",
+    "방송 / 연예",
+    "IT",
+    "쇼핑",
+    "생활",
+    "해외",
+    "스포츠",
+    "정치"
+]
 
-class DocumentCreate(BaseModel):
-    """
-    백엔드(크롤러)로부터 받을 데이터의 형식
-    """
-    article_id: str = Field(..., description="뉴스 원본의 고유 ID")
-    original_url: str = Field(..., description="뉴스 원본 URL")
-    published_at: datetime.datetime = Field(..., description="발행 시간")
-    title: str = Field(..., description="기사 제목")
-    text: str = Field(..., description="기사 본문")
-    category: str = Field(..., description="뉴스 사이트의 원본 카테고리")
+# --- 1. Pydantic 스키마 (API 출력 형식 정의) ---
+# DocumentCreate 모델이 삭제되었습니다.
 
 class DocumentResponse(BaseModel):
     """
-    API가 성공적으로 문서를 생성한 후 반환할 데이터 형식
+    [출력] API가 반환할 문서의 기본 형식
     """
     id: int # 우리 DB의 고유 ID
     article_id: str
@@ -39,107 +42,120 @@ class DocumentResponse(BaseModel):
     keywords: Optional[List[str]] = None
     
     class Config:
-        from_attributes = True # SQLAlchemy 모델 -> Pydantic 변환
+        from_attributes = True
 
 class SimilarDocumentResponse(BaseModel):
     """
+    [출력] GET /.../similar
     유사 문서 조회 시 반환할 데이터 형식
     """
     doc: DocumentResponse
     score: float
 
-# --- APIRouter 객체 생성 ---
-router = APIRouter()
+# --- 2. API 엔드포인트 정의 ---
 
-# --- 표준 카테고리 목록 (AI 서버가 내부적으로 관리) ---
-# LLM 키워드 추출을 위한 표준 '보기' 목록
-STANDARD_CANDIDATES = [
-    "인공지능", "IT", "기술", "과학", "경제", "경영", 
-    "사회", "정치", "국제", "스포츠", "연예", "문화",
-    "농구", "축구", "야구", "반도체", "구글", "애플", "삼성전자"
-]
-
-
-# --- API 엔드포인트 정의 ---
-
+# 👇👇👇 이 API가 기존 POST /documents 를 대체합니다! 👇👇👇
 @router.post(
-    "/documents", 
-    response_model=DocumentResponse, 
-    status_code=status.HTTP_201_CREATED,
-    summary="새 문서 생성, 분석 및 인덱싱"
+    "/process/{doc_id}", 
+    response_model=DocumentResponse,
+    summary="[백엔드용] 기사 ID를 받아 AI 분석 및 인덱싱 수행"
 )
-async def create_document(
-    request: DocumentCreate,
+async def process_document_by_id(
+    doc_id: int,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    백엔드로부터 새 기사 정보를 받아 중복 여부를 확인한 후,
-    LLM 키워드 추출, SBERT 벡터화를 수행하고 DB 및 Faiss 인덱스에 저장합니다.
+    백엔드가 DB에 기사를 저장한 후, 이 API를 호출하여
+    해당 ID의 기사에 대한 AI 분석(LLM, SBERT) 및 Faiss 인덱싱을 트리거합니다.
     """
     
-    # 1. 중복 기사 확인 (가장 중요한 방어 로직)
-    # article_id (뉴스 고유 ID)를 기준으로 이미 저장되었는지 확인
-    query = select(DocumentModel).where(DocumentModel.article_id == request.article_id)
-    result = await db.execute(query)
-    existing_document = result.scalars().first()
+    # 1. DB에서 ID로 기사 데이터 조회
+    doc = await db.get(DocumentModel, doc_id)
     
-    if existing_document:
-        # 이미 처리된 기사라면, 200 OK와 함께 기존 정보를 반환
-        return existing_document
-
-    # 2. LLM 키워드 추출 (표준 카테고리 사용)
-    # 원본 카테고리 + 표준 목록을 합쳐서 후보로 사용할 수도 있습니다.
-    # 여기서는 간단하게 표준 목록만 사용합니다.
-    keywords = keyword_extractor.extract(request.text, STANDARD_CANDIDATES) 
+    if not doc:
+        raise HTTPException(status_code=404, detail="해당 ID의 문서를 찾을 수 없습니다.")
     
-    # 3. SBERT 벡터 생성 (ndarray 반환)
-    sbert_vector_np = analysis_service.encode_text(request.text)
-    sbert_vector_list = sbert_vector_np.tolist() # DB 저장을 위해 list로 변환
+    # 2. 이미 처리되었는지 확인
+    if doc.status == 'COMPLETED':
+        return doc # 이미 완료된 작업이면 그냥 반환
 
-    # 4. DB에 저장할 객체 생성
-    new_document = DocumentModel(
-        article_id=request.article_id,
-        original_url=request.original_url,
-        published_at=request.published_at,
-        title=request.title,
-        text=request.text,
-        category=request.category,
-        keywords=keywords,
-        sbert_vector=sbert_vector_list
-    )
+    # 3. LLM 키워드 추출
+    keywords = keyword_extractor.extract(doc.text, STANDARD_CANDIDATES) 
+    
+    # 4. SBERT 벡터 생성
+    sbert_vector_np = analysis_service.encode_text(doc.text)
+    sbert_vector_list = sbert_vector_np.tolist() 
 
-    # 5. DB에 저장
-    db.add(new_document)
+    # 5. DB 객체 업데이트 (UPDATE)
+    doc.keywords = keywords
+    doc.sbert_vector = sbert_vector_list
+    doc.status = 'COMPLETED' # 상태를 '완료'로 변경
+
+    # 6. DB에 변경 사항 커밋
     await db.commit()
-    await db.refresh(new_document) # DB ID(new_document.id)를 확정받음
+    await db.refresh(doc)
     
-    # 6. Faiss 인덱스에 실시간 추가
+    # 7. Faiss 인덱스에 실시간 추가
     await analysis_service.add_document_to_index(
-        doc_id=new_document.id, 
+        doc_id=doc.id, 
         vector_list=sbert_vector_list
     )
     
-    # 201 Created 상태 코드와 함께 새로 생성된 정보를 반환
-    return new_document
+    return doc
+
 
 @router.get(
-    "/documents/{doc_id}/similar", 
+    "/{doc_id}/similar", 
     response_model=List[SimilarDocumentResponse], 
-    summary="유사 문서 조회 (Faiss 사용)"
+    summary="[SBERT 추천] 특정 기사와 유사한 기사 추천 (Faiss)"
 )
 async def get_similar_documents(
     doc_id: int,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    특정 문서(doc_id)와 의미적으로 가장 유사한 문서들을
-    Faiss 인덱스에서 초고속으로 검색하여 반환합니다.
+    [SBERT 기반 추천]
+    (이 API는 변경 없음)
     """
     
-    # Faiss 검색 로직은 모두 analysis_service 내부에 숨겨져 있습니다.
     similar_docs = await analysis_service.find_similar_documents(db, doc_id)
     
     if similar_docs is None:
         raise HTTPException(status_code=404, detail="해당 ID의 문서를 찾을 수 없거나 벡터가 없습니다.")
         
     return similar_docs
+
+
+@router.get(
+    "/category/{category_name}", 
+    response_model=List[DocumentResponse], 
+    summary="[LLM 추천] 특정 카테고리 기사 목록 (콜드 스타트용)"
+)
+async def get_documents_by_category(
+    category_name: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    [LLM 기반 추천]
+    (이 API는 변경 없음)
+    """
+    
+    query = (
+        select(DocumentModel)
+        .where(DocumentModel.keywords.contains([category_name]))
+        .where(DocumentModel.status == 'COMPLETED') # ★분석 완료된 것만 검색★
+        .order_by(DocumentModel.published_at.desc())
+        .limit(limit)
+    )
+    
+    result = await db.execute(query)
+    documents = result.scalars().all()
+    
+    if not documents:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"'{category_name}' 카테고리의 기사를 찾을 수 없습니다."
+        )
+        
+    return documents

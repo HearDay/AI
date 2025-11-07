@@ -1,24 +1,41 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
+from pydantic_settings import BaseSettings
+from pydantic import Field
 
-# 프로젝트 폴더에 'myapi.db' 라는 이름의 SQLite 데이터베이스 파일이 생성됩니다.
-DATABASE_URL = "sqlite+aiosqlite:///./myapi.db"
+# 1. .env 파일을 읽어올 설정 클래스
+class DatabaseSettings(BaseSettings):
+    DB_HOST: str
+    DB_PORT: int
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str
 
-# 데이터베이스와 통신하는 '엔진'을 만듭니다.
-engine = create_async_engine(DATABASE_URL)
+    class Config:
+        env_file = ".env" # .env 파일을 읽어들임
 
-# 데이터베이스와 대화(세션)를 나누기 위한 창구를 만듭니다.
+# 설정 인스턴스 생성
+settings = DatabaseSettings()
+
+# 2. SQLAlchemy에 맞는 MySQL 연결 URL 생성
+DATABASE_URL = (
+    f"mysql+aiomysql://{settings.DB_USER}:{settings.DB_PASSWORD}@"
+    f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+    f"?charset=utf8mb4" # UTF-8 설정을 위해
+)
+
+# 3. 비동기 엔진 및 세션 생성 (이 부분은 거의 동일)
+engine = create_async_engine(DATABASE_URL, echo=True, pool_pre_ping=True)
+
 SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
+    autocommit=False, 
+    autoflush=False, 
+    bind=engine, 
     class_=AsyncSession
 )
 
-# 우리가 만들 테이블(모델)들이 상속받을 기본 클래스입니다.
 Base = declarative_base()
 
-# API가 요청될 때마다 DB 세션을 생성하고, 끝나면 닫아주는 함수입니다.
 async def get_db():
     async with SessionLocal() as session:
         yield session

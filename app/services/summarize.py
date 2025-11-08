@@ -1,5 +1,5 @@
 from typing import Dict
-from app.core.llm import LLMClient
+from app.services.llm import LLMClient
 from app.core.memgpt_client import MemGPTClient
 from app.core.keywords import extract_keywords
 

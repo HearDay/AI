@@ -1,5 +1,5 @@
-from app.modules.llm import run_llm
-from app.prompt_templates import CONVERSATIONAL_STYLE, LEVEL_GUIDES
+from app.services.llm import run_llm
+from app.core.prompt_templates import CONVERSATIONAL_STYLE, LEVEL_GUIDES
 
 
 def _extract_keywords(text: str, top_k: int = 5):
@@ -11,7 +11,6 @@ def _extract_keywords(text: str, top_k: int = 5):
             seen.append(w)
         if len(seen) >= top_k:
             break
-    return seen
 
 
 def generate_question(context: str, mode: str = "open_question", level: str = "beginner") -> str:

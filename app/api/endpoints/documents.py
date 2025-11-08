@@ -5,7 +5,7 @@ from sqlalchemy.orm import joinedload
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-# 👇👇👇 이 부분을 수정합니다! (models.models -> app.models.document)
+# (사용자님 파일 경로에 맞춰주세요)
 from app.core.database import get_db
 from app.models.document import Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector
 from app.services.keyword_extractor import keyword_extractor
@@ -65,33 +65,38 @@ async def process_document_by_id(
     await db.commit()
 
     try:
+        # 👇👇👇 [수정됨] await 추가 👇👇👇
         keywords_list = await keyword_extractor.extract(article.description, STANDARD_CANDIDATES)
+        
+        # 👇👇👇 [수정됨] await 추가 👇👇👇
         sbert_vector_np = await analysis_service.encode_text(article.description)
         sbert_vector_list = sbert_vector_np.tolist() 
 
+        # --- 키워드 저장 ---
         await db.execute(
             ArticleRecommendKeyword.__table__.delete()\
             .where(ArticleRecommendKeyword.article_recommend_id == reco.id)
         )
-        
         for kw in keywords_list:
             db.add(ArticleRecommendKeyword(article_recommend_id=reco.id, keyword=kw))
         
+        # --- 벡터 저장 ---
         await db.execute(
             ArticleRecommendVector.__table__.delete()\
             .where(ArticleRecommendVector.article_recommend_id == reco.id)
         )
-        
         db.add(ArticleRecommendVector(
             article_recommend_id=reco.id, 
             sbert_vector=sbert_vector_list
         ))
 
+        # --- 상태 완료 ---
         reco.status = 'COMPLETED'
         
         await db.commit()
         await db.refresh(reco)
         
+        # --- Faiss 인덱스 추가 ---
         await analysis_service.add_document_to_index(
             reco_id=reco.id, 
             vector_list=sbert_vector_list
@@ -100,9 +105,11 @@ async def process_document_by_id(
         return {"message": "AI 분석 및 인덱싱 완료", "recommend_id": reco.id}
 
     except Exception as e:
+        # 롤백 및 에러 반환
         reco.status = 'FAILED'
         await db.commit()
-        raise HTTPException(status_code=500, detail=f"AI 분석 중 오류 발생: {str(e)}")
+        # ★[수정됨] 오류 디버깅을 위해 str(e) 대신 repr(e)를 사용
+        raise HTTPException(status_code=500, detail=f"AI 분석 중 오류 발생: {repr(e)}")
 
 
 @router.get(

@@ -3,10 +3,9 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-import asyncio  # 1. asyncio를 임포트합니다.
+import asyncio  # 1. asyncio 임포트
 
-# (참고) 임포트 경로가 app.models.document인지 app.models.models인지
-# 사용자님의 파일명에 맞춰주세요. (document.py라고 가정)
+# (사용자님 파일 경로에 맞춰주세요)
 from app.models.document import Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector
 
 class AnalysisService:
@@ -17,7 +16,7 @@ class AnalysisService:
         self.index = faiss.IndexFlatIP(self.d) 
         self.index_to_reco_id = {} 
 
-    # 2. '무거운' 동기 함수를 비동기로 변경
+    # 2. 'def'를 'async def'로 변경
     async def encode_text(self, text: str) -> np.ndarray:
         """
         [수정됨] CPU를 막는 model.encode()를 별도 스레드에서 실행합니다.
@@ -27,10 +26,6 @@ class AnalysisService:
         return embedding.astype('float32')
 
     async def load_and_build_index(self, db: AsyncSession):
-        """
-        (이 함수는 서버 시작 시 1회만 실행되므로, 
-         asyncio.to_thread가 필수는 아니지만, 그대로 둡니다.)
-        """
         print("DB로부터 Faiss 인덱스를 빌드합니다...")
         
         query = select(

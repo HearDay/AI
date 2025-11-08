@@ -13,7 +13,8 @@ jobs:
       # 1️⃣ 코드 + 서브모듈 체크아웃
       - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
-
+        with:
+          submodules: true
 
       # 2️⃣ DockerHub 로그인
       - name: Login to DockerHub

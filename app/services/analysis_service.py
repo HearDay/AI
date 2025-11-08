@@ -5,8 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import asyncio
 from fastapi.concurrency import run_in_threadpool  # 1. run_in_threadpool 임포트
-
-# 👇 [수정됨] app.models.document 임포트
 from app.models.document import Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector
 
 class AnalysisService:
@@ -25,6 +23,10 @@ class AnalysisService:
         return embedding.astype('float32')
 
     async def load_and_build_index(self, db: AsyncSession):
+        """
+        (이 함수는 서버 시작 시 1회만 실행되므로, 
+         asyncio.to_thread가 필수는 아니지만, 그대로 둡니다.)
+        """
         print("DB로부터 Faiss 인덱스를 빌드합니다...")
         
         query = select(

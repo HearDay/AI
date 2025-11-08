@@ -15,6 +15,7 @@ class KeywordExtractor:
         """
         [수정됨] CPU를 막는 classifier()를 FastAPI의 스레드풀에서 실행합니다.
         """
+
         if not text or not candidate_keywords:
             return []
             
@@ -34,5 +35,4 @@ class KeywordExtractor:
         
         return top_keywords
 
-# 싱글턴 인스턴스 생성
 keyword_extractor = KeywordExtractor()

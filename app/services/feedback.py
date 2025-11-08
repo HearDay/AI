@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from app.modules.question_generator import generate_question
-from app.modules.guardrail_service import content_filter, relevance_check
-from app.memgpt_agent import get_agent, reset_agent, safe_chat
+from app.services.question_generator import generate_question
+from app.services.guardrail_service import content_filter, relevance_check
+from app.core.memgpt_agent import get_agent, reset_agent, safe_chat
 from google.cloud import speech, texttospeech
 import base64, os
 

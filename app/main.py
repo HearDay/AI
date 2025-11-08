@@ -23,17 +23,8 @@ async def on_startup():
     # 2. Faiss 인덱스 빌드 (analysis_service.py)
     async with SessionLocal() as session:
         await analysis_service.load_and_build_index(session)
-    asyncio.create_task(_build_faiss_background())
-
-    # 3. Kanana 모델 로드
-    async def _load_kanana_model():
-        print("Kanana 모델 로드 중... (약 2~3분 소요)")
-        global _llm_client
-        
-        _llm_client = await asyncio.to_thread(LLMClient)
-        print("Kanana 모델 로드 완료. 시연 중 즉시 응답 가능합니다.")
-
-    asyncio.create_task(_load_kanana_model())
+    
+    print("서버 시작 완료. LLM은 첫 요청 시 로드됩니다.")
 
 
 # ======================================================

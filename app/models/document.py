@@ -1,11 +1,92 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Index, Enum
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, UniqueConstraint, LargeBinary, TypeDecorator
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
-import enum
+import numpy as np
+import json
+
+# ✅ Numpy 배열을 BLOB으로 저장하는 커스텀 타입
+class NumpyArray(TypeDecorator):
+    """
+    Numpy 배열을 바이너리(BLOB)로 저장
+    - 저장: numpy array -> bytes
+    - 조회: bytes -> numpy array
+    """
+    impl = LargeBinary
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Python numpy array -> bytes (DB 저장 시)"""
+        if value is None:
+            return None
+        # numpy array를 bytes로 변환
+        if isinstance(value, np.ndarray):
+            return value.tobytes()
+        # list인 경우 numpy로 변환 후 bytes로
+        elif isinstance(value, list):
+            return np.array(value, dtype=np.float32).tobytes()
+        return value
+
+    def process_result_value(self, value, dialect):
+        """bytes -> numpy array (DB 조회 시)"""
+        if value is None:
+            return None
+        # bytes를 numpy array로 변환 (768차원 SBERT 벡터 가정)
+        return np.frombuffer(value, dtype=np.float32)
+
+
+# ✅ 대안: JSON TEXT로 저장 (더 안전하고 디버깅 쉬움)
+class JSONEncodedList(TypeDecorator):
+    """
+    Python list를 JSON 문자열로 TEXT에 저장
+    """
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Python list -> JSON 문자열 (DB 저장 시)"""
+        if value is None:
+            return None
+        
+        # numpy array면 list로 변환
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        
+        # 이미 문자열이면 그대로 반환
+        if isinstance(value, str):
+            return value
+        
+        # list나 dict를 JSON 문자열로 변환
+        # ✅ ensure_ascii=False로 한글 등 유니코드 문자 보존
+        return json.dumps(value, ensure_ascii=False)
+
+    def process_result_value(self, value, dialect):
+        """JSON 문자열 -> Python list (DB 조회 시)"""
+        if value is None:
+            return None
+        
+        # 이미 list나 dict면 그대로 반환 (MySQL JSON 타입의 경우)
+        if isinstance(value, (list, dict)):
+            return value
+        
+        # bytes면 디코딩
+        if isinstance(value, bytes):
+            value = value.decode('utf-8')
+        
+        # 문자열이면 JSON 파싱
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ JSON 파싱 실패: {e}")
+                print(f"   값: {value[:100]}...")
+                return None
+        
+        print(f"⚠️ 알 수 없는 타입: {type(value)}")
+        return None
+
 
 # --- 1. 백엔드가 관리하는 'Article' 테이블 ---
-# (우리는 이 테이블을 읽기만 합니다)
 class Article(Base):
     __tablename__ = "article"
     
@@ -19,12 +100,17 @@ class Article(Base):
     publish_date = Column(DateTime(timezone=True), nullable=False)
     title = Column(Text, nullable=False)
     
-    # 1:1 관계 (Article <-> ArticleDetail) - 백엔드 스키마에 따름
-    article_detail_id = Column(Integer, ForeignKey("article_detail.id")) # (가정: article_detail 테이블이 존재)
+    # 1:1 관계 (Article <-> ArticleDetail)
+    article_detail_id = Column(Integer)
     
     # 1:1 관계 (Article <-> ArticleRecommend)
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="article", uselist=False)
+
+    __table_args__ = (
+        Index('uq_original_url_prefix', 'origin_link', unique=True, mysql_length=255),
+    )
+
 
 # --- 2. AI가 관리하는 'ArticleRecommend' (작업 상태) ---
 class ArticleRecommend(Base):
@@ -34,17 +120,12 @@ class ArticleRecommend(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Enum/String 타입으로 상태 관리
     status = Column(String(50), default='PENDING', index=True, nullable=False) 
     
-    # 1:1 관계 (Article 테이블에서 이 레코드를 참조)
     article = relationship("Article", back_populates="recommend", uselist=False)
-    
-    # 1:N 관계 (이 레코드는 여러 개의 키워드를 가짐)
     keywords = relationship("ArticleRecommendKeyword", back_populates="recommend")
-    
-    # 1:1 관계 (이 레코드는 하나의 벡터를 가짐)
     vector = relationship("ArticleRecommendVector", back_populates="recommend", uselist=False)
+
 
 # --- 3. AI가 관리하는 'ArticleRecommendKeyword' (LLM 키워드) ---
 class ArticleRecommendKeyword(Base):
@@ -53,20 +134,25 @@ class ArticleRecommendKeyword(Base):
     id = Column(Integer, primary_key=True, index=True)
     keyword = Column(String(100), index=True)
     
-    # N:1 관계 (키워드는 하나의 Recommend 레코드에 속함)
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="keywords")
+
 
 # --- 4. AI가 관리하는 'ArticleRecommendVector' (SBERT 벡터) ---
 class ArticleRecommendVector(Base):
     __tablename__ = "article_recommend_vector"
     
     id = Column(Integer, primary_key=True, index=True)
-    sbert_vector = Column(JSON, nullable=False) # 벡터는 JSON 타입으로 저장
     
-    # 1:1 관계 (벡터는 하나의 Recommend 레코드에 속함)
+    # ✅ 옵션 1: BLOB으로 저장 (빠르고 용량 적음, 바이너리 저장)
+    # sbert_vector = Column(NumpyArray, nullable=False)
+    
+    # ✅ 옵션 2: TEXT로 JSON 저장 (디버깅 쉽고 안전, 권장)
+    sbert_vector = Column(JSONEncodedList, nullable=False)
+    
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="vector")
 
-# (참고: 백엔드 스키마에 'article_detail' 테이블이 언급되어 있으나, AI 분석에는 필요하지 않아 정의하지 않았습니다.)
-# (또한, AWS RDS 테이블 자동 생성을 위해 main.py가 이 파일을 임포트해야 합니다)
+    __table_args__ = (
+        UniqueConstraint('article_recommend_id', name='uq_reco_id_vector'),
+    )

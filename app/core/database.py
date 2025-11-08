@@ -1,5 +1,5 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -17,25 +17,39 @@ class DatabaseSettings(BaseSettings):
 # 설정 인스턴스 생성
 settings = DatabaseSettings()
 
-# 2. SQLAlchemy에 맞는 MySQL 연결 URL 생성
+# MySQL 비동기 연결 URL
 DATABASE_URL = (
-    f"mysql+aiomysql://{settings.DB_USER}:{settings.DB_PASSWORD}@"
+    f"mysql+asyncmy://{settings.DB_USER}:{settings.DB_PASSWORD}@"
     f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-    f"?charset=utf8mb4" # UTF-8 설정을 위해
+    f"?charset=utf8mb4"
 )
 
-# 3. 비동기 엔진 및 세션 생성 (이 부분은 거의 동일)
-engine = create_async_engine(DATABASE_URL, echo=True, pool_pre_ping=True)
+# 3. 비동기 엔진 생성
+engine = create_async_engine(
+    DATABASE_URL, 
+    echo=True, 
+    pool_pre_ping=True,
+    pool_recycle=3600,  # 1시간마다 커넥션 재생성 (MySQL 타임아웃 방지)
+)
 
-SessionLocal = sessionmaker(
-    autocommit=False, 
-    autoflush=False, 
-    bind=engine, 
-    class_=AsyncSession
+# ✅ async_sessionmaker 사용 (sessionmaker 대신)
+SessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,  # 백그라운드 작업에서 객체 재사용 가능
+    autocommit=False,
+    autoflush=False,
 )
 
 Base = declarative_base()
 
+# Dependency for FastAPI
 async def get_db():
+    """
+    FastAPI 의존성으로 사용할 DB 세션 생성기
+    """
     async with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.close()

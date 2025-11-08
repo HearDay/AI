@@ -20,6 +20,7 @@ sqlalchemy
 aiomysql
 PyMySQL
 asyncio
+asyncmy
 # AI 모델 (SBERT, LLM)
 sentence-transformers
 transformers

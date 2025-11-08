@@ -32,7 +32,7 @@ from app.core.prompt_templates import build_open_question_prompt
 from app.services.question_generator import generate_question
 from app.services import feedback, summary
 
-# 형님 라우터 등록
+# 라우터 등록
 app.include_router(feedback.router)
 app.include_router(summary.router)
 

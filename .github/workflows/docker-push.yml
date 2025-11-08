@@ -28,5 +28,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/ai-api:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/ai-api:latest
+            ${{ secrets.DOCKER_USERNAME }}/ai-api:${{ github.ref_name }}
+            ${{ secrets.DOCKER_USERNAME }}/ai-api:latest

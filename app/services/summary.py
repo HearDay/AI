@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from app.schemas import SummarizeIn, SummarizeOut, KeywordsIn, KeywordsOut
+from app.core.schemas import SummarizeIn, SummarizeOut, KeywordsIn, KeywordsOut
 from app.services.summarize import SummarizeService
-from app.core.llm import LLMClient
+from app.services.llm import LLMClient
 from app.core.memgpt_client import MemGPTClient
 
 router = APIRouter(prefix="", tags=["summary"])

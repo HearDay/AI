@@ -1,0 +1,6 @@
+[submodule "MemGPT"]
+	path = MemGPT
+	url = https://github.com/madebywild/MemGPT
+[submodule "submodules/MemGPT"]
+	path = submodules/MemGPT
+	url = https://github.com/madebywild/MemGPT

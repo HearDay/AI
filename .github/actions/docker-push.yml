@@ -1,0 +1,32 @@
+name: Build and Push Docker Image on Tag
+
+on:
+  push:
+    tags:
+      - '*'   # 모든 태그 푸시 시 실행 (예: v1.0.0, 1.2.3 등)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ 코드 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2️⃣ DockerHub 로그인
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 3️⃣ Docker 이미지 빌드 & 푸시
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/ai-api:${{ github.ref_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/ai-api:latest

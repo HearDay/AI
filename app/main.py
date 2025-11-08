@@ -24,3 +24,37 @@ app.include_router(recommend_router.router)
 @app.get("/")
 def read_root():
     return {"message": "AI 추천 API 서버에 오신 것을 환영합니다."}
+
+#------------------------------------------------------------------
+
+from fastapi import Form
+from app.core.prompt_templates import build_open_question_prompt
+from app.services.question_generator import generate_question
+from app.services import feedback, summary
+
+# 형님 라우터 등록
+app.include_router(feedback.router)
+app.include_router(summary.router)
+
+# 헬스체크
+@app.get("/health")
+def health():
+    """서버 상태 확인"""
+    return {"ok": True}
+
+# 프롬프트 프리뷰 (디버그용)
+@app.post("/prompt/preview")
+def prompt_preview(level: str = Form("beginner"), summary: str = Form(...)):
+    """프롬프트 미리보기 (탐구형 질문용)"""
+    return {"level": level, "prompt": build_open_question_prompt(summary, level)}
+
+# LLM 기반 질문 생성
+@app.post("/prompt/question")
+def prompt_question(
+    mode: str = Form("open"),
+    level: str = Form("beginner"),
+    context: str = Form(...),
+):
+    """LLM 기반 탐구형 질문 생성"""
+    question = generate_question(context, mode=mode, level=level)
+    return {"mode": mode, "level": level, "question": question}

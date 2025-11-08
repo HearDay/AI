@@ -65,8 +65,8 @@ async def process_document_by_id(
     await db.commit()
 
     try:
-        keywords_list = keyword_extractor.extract(article.description, STANDARD_CANDIDATES)
-        sbert_vector_np = analysis_service.encode_text(article.description)
+        keywords_list = await keyword_extractor.extract(article.description, STANDARD_CANDIDATES)
+        sbert_vector_np = await analysis_service.encode_text(article.description)
         sbert_vector_list = sbert_vector_np.tolist() 
 
         await db.execute(

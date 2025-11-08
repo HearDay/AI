@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+import asyncio
 from app.core.database import engine, Base, SessionLocal
 # 👇👇👇 이 부분을 수정합니다! (models -> document)
 from app.models import document 
@@ -15,8 +16,10 @@ async def on_startup():
         await conn.run_sync(Base.metadata.create_all) 
     
     # 2. Faiss 인덱스 빌드
-    async with SessionLocal() as session:
-        await analysis_service.load_and_build_index(session)
+    async def _build_faiss():
+        async with SessionLocal() as session:
+            await analysis_service.load_and_build_index(session)
+    asyncio.create_task(_build_faiss())
 
 # 라우터 포함
 app.include_router(recommend_router.router)
@@ -55,6 +58,6 @@ def prompt_question(
     level: str = Form("beginner"),
     context: str = Form(...),
 ):
-    """LLM 기반 탐구형 질문 생성"""
+    """LLM 기반 질문 생성"""
     question = generate_question(context, mode=mode, level=level)
     return {"mode": mode, "level": level, "question": question}

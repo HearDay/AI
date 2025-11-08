@@ -3,9 +3,10 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-import asyncio  # 1. asyncio 임포트
+import asyncio
+from fastapi.concurrency import run_in_threadpool  # 1. run_in_threadpool 임포트
 
-# (사용자님 파일 경로에 맞춰주세요)
+# 👇 [수정됨] app.models.document 임포트
 from app.models.document import Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector
 
 class AnalysisService:
@@ -16,13 +17,11 @@ class AnalysisService:
         self.index = faiss.IndexFlatIP(self.d) 
         self.index_to_reco_id = {} 
 
-    # 2. 'def'를 'async def'로 변경
     async def encode_text(self, text: str) -> np.ndarray:
         """
-        [수정됨] CPU를 막는 model.encode()를 별도 스레드에서 실행합니다.
+        [수정됨] CPU를 막는 model.encode()를 별도 스레드풀에서 실행합니다.
         """
-        # 3. asyncio.to_thread로 감싸서 비동기로 실행
-        embedding = await asyncio.to_thread(self.model.encode, text)
+        embedding = await run_in_threadpool(self.model.encode, text)
         return embedding.astype('float32')
 
     async def load_and_build_index(self, db: AsyncSession):
@@ -44,9 +43,8 @@ class AnalysisService:
         
         if all_vectors:
             vectors_np = np.array(all_vectors).astype('float32')
-            # 4. Faiss의 '무거운' 동기 작업도 스레드에서 실행
-            await asyncio.to_thread(faiss.normalize_L2, vectors_np)
-            await asyncio.to_thread(self.index.add, vectors_np)
+            await run_in_threadpool(faiss.normalize_L2, vectors_np)
+            await run_in_threadpool(self.index.add, vectors_np)
             
             for i, reco_id in enumerate(reco_ids):
                 self.index_to_reco_id[i] = reco_id 
@@ -54,16 +52,11 @@ class AnalysisService:
             print(f"총 {self.index.ntotal}개의 벡터가 Faiss 인덱스에 로드되었습니다.")
 
     async def add_document_to_index(self, reco_id: int, vector_list: list):
-        """
-        (이 함수도 비동기로 변경)
-        """
         vector_np = np.array([vector_list]).astype('float32')
-        
-        # 5. Faiss의 '무거운' 동기 작업도 스레드에서 실행
-        await asyncio.to_thread(faiss.normalize_L2, vector_np)
+        await run_in_threadpool(faiss.normalize_L2, vector_np)
         
         new_index_id = self.index.ntotal
-        await asyncio.to_thread(self.index.add, vector_np)
+        await run_in_threadpool(self.index.add, vector_np)
         
         self.index_to_reco_id[new_index_id] = reco_id 
         print(f"ArticleRecommend ID {reco_id}가 Faiss 인덱스 {new_index_id}에 추가되었습니다.")
@@ -84,10 +77,9 @@ class AnalysisService:
             return []
         
         query_vector_np = np.array([vector_list]).astype('float32')
-        await asyncio.to_thread(faiss.normalize_L2, query_vector_np)
+        await run_in_threadpool(faiss.normalize_L2, query_vector_np)
 
-        # 6. Faiss의 '무거운' 동기 작업(search)을 스레드에서 실행
-        D, I = await asyncio.to_thread(
+        D, I = await run_in_threadpool(
             self.index.search, query_vector_np, top_k + 1
         )
 

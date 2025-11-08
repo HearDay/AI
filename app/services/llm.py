@@ -11,12 +11,14 @@ class LLMClient:
 
         # 모델과 토크나이저 로드
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+
+
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
-            device_map="auto",
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            torch_dtype=torch.float32,     # CPU 환경에서는 float32가 안전
+            device_map=None,               # auto 제거 (offload 방지)
             low_cpu_mem_usage=True,
-        )
+        ).to("cpu")                        # 명시적으로 CPU로 이동
 
         # pipeline 초기화
         self.generator = pipeline(
@@ -26,6 +28,7 @@ class LLMClient:
             max_new_tokens=256,
             temperature=0.7,
             repetition_penalty=1.1,
+            device=-1,                     
         )
 
     def generate(
@@ -38,7 +41,7 @@ class LLMClient:
         OpenAI Chat 형식(messages=[{role, content}, ...])을 받아
         Kanana 모델에서 직접 추론.
         """
-        # system/user/assistant 구조를 단일 프롬프트로 합침
+        
         prompt = ""
         for msg in messages:
             role = msg.get("role", "user")
@@ -50,22 +53,27 @@ class LLMClient:
             elif role == "assistant":
                 prompt += f"[AI 응답]\n{content}\n\n"
 
-        # 실제 추론
-        output = self.generator(prompt, max_new_tokens=max_tokens, temperature=temperature)[0]["generated_text"]
+        
+        output = self.generator(
+            prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature
+        )[0]["generated_text"]
 
-        # 프롬프트 이후의 생성문만 추출
+        
         if prompt in output:
             output = output.split(prompt)[-1].strip()
 
         return output.strip()
 
 
-
 _llm_client = LLMClient()
+
 
 def run_llm(messages, max_tokens: int = 256, temperature: float = 0.7) -> str:
     """LLMClient 기반 메시지 생성"""
     return _llm_client.generate(messages, max_tokens=max_tokens, temperature=temperature)
+
 
 def simple_prompt(prompt_text: str, max_tokens: int = 256, temperature: float = 0.7) -> str:
     """단일 텍스트 입력용 헬퍼"""

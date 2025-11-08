@@ -19,7 +19,7 @@ pydantic-settings
 sqlalchemy
 aiomysql
 PyMySQL
-
+asyncio
 # AI 모델 (SBERT, LLM)
 sentence-transformers
 transformers

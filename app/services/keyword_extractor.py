@@ -1,5 +1,5 @@
 from transformers import pipeline
-import asyncio  # 1. asyncio 임포트
+import asyncio # 1. asyncio 임포트
 
 class KeywordExtractor:
     def __init__(self):
@@ -12,9 +12,6 @@ class KeywordExtractor:
 
     # 2. 'def'를 'async def'로 변경
     async def extract(self, text: str, candidate_keywords: list[str], top_k: int = 3) -> list[str]:
-        """
-        [수정됨] CPU를 막는 classifier()를 별도 스레드에서 실행합니다.
-        """
         if not text or not candidate_keywords:
             return []
             
@@ -33,5 +30,4 @@ class KeywordExtractor:
         
         return top_keywords
 
-# 싱글턴 인스턴스 생성
 keyword_extractor = KeywordExtractor()

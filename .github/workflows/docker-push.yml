@@ -1,4 +1,4 @@
-name: Build and Push Docker Image on Tag
+name: Build and Push Docker Image to ECR on Tag
 
 on:
   push:
@@ -16,19 +16,27 @@ jobs:
         with:
           submodules: true
 
-      # 2️⃣ DockerHub 로그인
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
+      # 2️⃣ AWS 자격 증명 설정
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      # 3️⃣ Docker 이미지 빌드 & 푸시
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/ai-api:${{ github.ref_name }}
-            ${{ secrets.DOCKER_USERNAME }}/ai-api:latest
+      # 3️⃣ Amazon ECR 로그인
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4️⃣ Docker 이미지 빌드 & ECR 푸시
+      - name: Build and push Docker image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+          IMAGE_TAG: ${{ github.ref_name }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest

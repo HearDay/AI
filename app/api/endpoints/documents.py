@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload
-from typing import List, Optional
-from pydantic import BaseModel, Field
-import datetime
+from typing import List
+from pydantic import BaseModel
+from sqlalchemy import func
 
 # 백그라운드 작업에서 새 DB 세션을 만들기 위해 SessionLocal을 임포트합니다.
 from app.core.database import get_db, SessionLocal
@@ -199,33 +199,49 @@ async def get_similar_articles(
 
 
 @router.get(
-    "/category/{category_name}", 
+    "/category", 
     response_model=List[ArticleResponse], 
-    summary="[LLM 추천] 특정 카테고리 기사 목록 (콜드 스타트용)"
+    summary="[LLM 추천] 여러 카테고리 기반 기사 목록 (콜드 스타트용)"
 )
-async def get_documents_by_category(
-    category_name: str,
+async def get_documents_by_categories(
+    names: str,  # 예: "경제,IT,스포츠"
     limit: int = 20,
     db: AsyncSession = Depends(get_db)
 ):
-    
+    """
+    여러 카테고리를 한 번에 받아서, 
+    일치하는 카테고리 키워드 개수가 많은 기사 순으로 반환합니다.
+    예: /category?names=경제,IT,스포츠
+    """
+
+    # 1️⃣ 입력된 카테고리 문자열을 리스트로 분리
+    category_list = [name.strip() for name in names.split(",") if name.strip()]
+    if not category_list:
+        raise HTTPException(status_code=400, detail="카테고리 이름을 하나 이상 입력해야 합니다.")
+
+    # 2️⃣ ArticleRecommend, ArticleRecommendKeyword 조인 후, 일치 개수 계산
     query = (
-        select(Article)
+        select(
+            Article,
+            func.count(ArticleRecommendKeyword.keyword).label("match_count")  # 일치 개수 계산
+        )
         .join(Article.recommend)
         .join(ArticleRecommend.keywords)
-        .where(ArticleRecommendKeyword.keyword == category_name)
+        .where(ArticleRecommendKeyword.keyword.in_(category_list))
         .where(ArticleRecommend.status == 'COMPLETED')
-        .order_by(Article.publish_date.desc())
+        .group_by(Article.id)
+        .order_by(func.count(ArticleRecommendKeyword.keyword).desc(), Article.publish_date.desc())
         .limit(limit)
     )
-    
+
+    # 3️⃣ 실행
     result = await db.execute(query)
-    articles = result.scalars().unique().all()
-    
+    articles = [row[0] for row in result.fetchall()]  # row[0]은 Article 객체
+
     if not articles:
         raise HTTPException(
             status_code=404, 
-            detail=f"'{category_name}' 카테고리의 기사를 찾을 수 없습니다."
+            detail=f"{category_list} 중 일치하는 기사를 찾을 수 없습니다."
         )
-        
+
     return articles

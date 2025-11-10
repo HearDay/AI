@@ -32,7 +32,7 @@ except ImportError as e1:
         from memgpt.memory import MemoryStore  # type: ignore
         from memgpt.providers import get_provider as _get_provider  # type: ignore
     except ImportError as e2:
-        # ✅ 예비 2: core 폴더 구조 대응
+        # core 폴더 구조 대응
         try:
             from memgpt.core.agent import Agent  # type: ignore
             from memgpt.core.memory import MemoryStore  # type: ignore

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.services.question_generator import generate_question
-from app.services.guardrail_service import content_filter, relevance_check
-from app.core.memgpt_agent import get_agent, reset_agent, safe_chat
+from app.services.guardrail_service import content_filter
+from app.core.memgpt_agent import get_agent, safe_chat
 from google.cloud import speech, texttospeech
 import base64, os
 
@@ -63,7 +63,12 @@ def tts_api(payload: dict):
         )
         audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
 
-        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+        response = client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config
+        )
+
         audio_b64 = base64.b64encode(response.audio_content).decode("utf-8")
         return {"audio_b64": audio_b64}
 
@@ -72,95 +77,82 @@ def tts_api(payload: dict):
 
 
 # --------------------------------------------------
-# 일반 채팅 (MemGPT 기반)
-# --------------------------------------------------
-@router.post("/chat")
-def chat_feedback(payload: dict):
-    """
-    일반 텍스트 기반 대화 (MemGPT 세션 기억 유지)
-    입력: {"user_id": "...", "session_id": "...", "message": "...", "level": "..."}
-    출력: {"reply": "..."}
-    """
-    try:
-        user_id = payload.get("user_id", "demo")
-        session_id = payload.get("session_id", "default")
-        message = payload.get("message", "").strip()
-        level = payload.get("level", "beginner")
-
-        if not message:
-            raise HTTPException(status_code=400, detail="message 필드가 필요합니다.")
-
-        system_prompt = f"""너는 뉴스 토론 파트너다.
-- 사용자의 메시지를 읽고 자연스럽게 응답하라.
-- 대화의 맥락을 기억하고 이전 내용과 일관되게 대답하라.
-- 필요하면 간단한 피드백 후 탐구형 질문을 덧붙여라."""
-
-        agent = get_agent(user_id, session_id, system_prompt)
-        result = safe_chat(agent, message)
-        return {
-            "reply": result["answer"],
-            "fallback": result["fallback"],
-            "session_id": session_id,
-            "user_id": user_id
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat Error: {e}")
-
-
-# --------------------------------------------------
-# 토론 (요약 기반, followup/open_question)
+# 토론 (자연스러운 대화 + 탐구형 질문 포함)
 # --------------------------------------------------
 @router.post("/discussion")
 def discussion_feedback(payload: dict):
     """
-    뉴스 요약 기반 또는 후속 토론 생성 (MemGPT 세션 포함)
-    입력: {"user_id": "...", "session_id": "...", "content": "...", "message": "...", "mode": "...", "level": "..."}
-    출력: {"reply": "..."}
+    대화형 토론 (MemGPT 세션 포함)
+    입력:
+        {
+            "user_id": "...",
+            "session_id": "...",
+            "content": "...",
+            "message": "...",
+            "mode": "...",
+            "level": "..."
+        }
+    출력:
+        {
+            "reply": "...",
+            "fallback": bool,
+            "session_id": "...",
+            "user_id": "..."
+        }
     """
     try:
         user_id = payload.get("user_id", "demo")
         session_id = payload.get("session_id", "discussion")
         content = payload.get("content", "")
-        message = payload.get("message", "")
+        message = payload.get("message", "").strip()
         mode = payload.get("mode", "open_question")
         level = payload.get("level", "beginner")
 
-        if not (content or message):
-            raise HTTPException(status_code=400, detail="content 또는 message 필드가 필요합니다.")
+        if not message:
+            raise HTTPException(status_code=400, detail="message 필드가 필요합니다.")
 
-        context = f"{content}\n\n{message}" if message else content
-        question = generate_question(context, mode=mode, level=level)
+        # -------------------------------
+        # 시스템 프롬프트 정의
+        # -------------------------------
+        system_prompt = f"""
+        너는 사용자의 토론 파트너이자 대화 상대다.
+        - 사용자의 발화를 이해하고 자연스럽게 반응하라.
+        - 이전 대화 내용을 기억해 일관성 있게 대화하라.
+        - 대화 중 자연스러운 피드백 후 탐구형 질문을 한 문장 덧붙여라.
+        - 지나치게 포멀하거나 로봇같이 말하지 말고, 사람처럼 친근하게 표현하라.
+        """
 
-        is_safe, reason = content_filter(question)
-        if not is_safe:
-            question = reason
+        # -------------------------------
+        # MemGPT 세션 기반 응답
+        # -------------------------------
+        agent = get_agent(user_id, session_id, system_prompt)
+        chat_result = safe_chat(agent, message)
 
-        # MemGPT에 기록 남기기
-        agent = get_agent(user_id, session_id, f"토론 모드 ({mode})")
-        _ = safe_chat(agent, f"사용자: {message}\n시스템 질문: {question}")
+        # -------------------------------
+        # 추가 탐구형 질문 생성 (선택적)
+        # -------------------------------
+        context = f"{content}\n\n{message}" if content else message
+        try:
+            question = generate_question(context, mode=mode, level=level)
+            is_safe, reason = content_filter(question)
+            if not is_safe:
+                question = reason
+        except Exception:
+            question = ""
+
+        # -------------------------------
+        # 응답 조합
+        # -------------------------------
+        final_reply = chat_result["answer"].strip()
+        if question and question not in final_reply:
+            final_reply += f"\n\n{question}"
 
         return {
-            "reply": question,
-            "mode": mode,
-            "level": level,
-            "session_id": session_id
+            "reply": final_reply.strip(),
+            "fallback": chat_result["fallback"],
+            "session_id": session_id,
+            "user_id": user_id
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Discussion Error: {e}")
-
-
-# --------------------------------------------------
-# 세션 초기화 (optional)
-# --------------------------------------------------
-@router.post("/reset")
-def reset_session(payload: dict):
-    """특정 사용자 세션의 MemGPT 에이전트 리셋"""
-    try:
-        user_id = payload.get("user_id", "demo")
-        session_id = payload.get("session_id", "default")
-        reset_agent(user_id, session_id, "새로운 대화를 시작합니다.")
-        return {"ok": True, "session_id": session_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Reset Error: {e}")

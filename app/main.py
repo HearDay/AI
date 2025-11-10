@@ -2,7 +2,8 @@ from fastapi import FastAPI, Form
 import asyncio
 from app.core.database import engine, Base, SessionLocal
 from app.models import document 
-from app.api.endpoints import documents as recommend_router 
+from app.api.endpoints.documents import recommend_router 
+from app.api.endpoints.documents import router as internal_router
 from app.services.analysis_service import analysis_service
 from app.core.prompt_templates import build_open_question_prompt
 from app.services.question_generator import generate_question
@@ -23,7 +24,6 @@ async def on_startup():
     # 2. Faiss 인덱스 빌드 (analysis_service.py)
     async with SessionLocal() as session:
         await analysis_service.load_and_build_index(session)
-    asyncio.create_task(_build_faiss_background())
 
     # 3. Kanana 모델 로드
     async def _load_kanana_model():
@@ -39,7 +39,8 @@ async def on_startup():
 # ======================================================
 # 라우터 등록
 # ======================================================
-app.include_router(recommend_router.router)
+app.include_router(internal_router)
+app.include_router(recommend_router)
 app.include_router(feedback.router)
 app.include_router(summary.router)
 

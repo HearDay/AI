@@ -4,10 +4,6 @@ accelerate
 safetensors
 sentencepiece
 
-# STT / TTS
-SpeechRecognition
-gTTS
-
 # Form 데이터 업로드용
 python-multipart
 # FastAPI 및 서버
@@ -30,3 +26,14 @@ torch
 
 # 벡터 검색
 faiss-cpu
+
+# AI 토론 모듈
+# MemGPT 관련
+memgpt
+
+# STT / TTS
+google-cloud-speech
+google-cloud-texttospeech
+
+# MySQL 비동기 드라이버 (Develop 서버 에러 방지)
+asyncmy

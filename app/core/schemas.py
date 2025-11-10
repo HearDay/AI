@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict
 
+# ==============================================
 # 피드백 / 요약 / 키워드 스키마
+# ==============================================
 
 class FeedbackIn(BaseModel):
     user_id: str = "demo"
@@ -10,6 +12,7 @@ class FeedbackIn(BaseModel):
     rubric: Optional[str] = None
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
 
+
 class FeedbackOut(BaseModel):
     score: int = Field(ge=0, le=100)
     strengths: List[str]
@@ -17,25 +20,34 @@ class FeedbackOut(BaseModel):
     tip: str
     followup: str
 
+
 class SummarizeIn(BaseModel):
     user_id: str = "demo"
     text: str
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
+
 
 class SummarizeOut(BaseModel):
     summary: str
     open_questions: List[str]
     keywords: List[str]
 
+
 class KeywordsIn(BaseModel):
     text: str
     top_k: int = 8
 
+
 class KeywordsOut(BaseModel):
     keywords: List[str]
 
-# 토론용 AI api
+
+# ==============================================
+# 토론 / AI 대화용 스키마 (discussion 엔드포인트)
+# ==============================================
+
 class PromptQuestionIn(BaseModel):
+    """대화형 토론 입력"""
     discussionId: Optional[int] = None
     nickname: Optional[str] = None
     articleTitle: Optional[str] = None
@@ -45,7 +57,10 @@ class PromptQuestionIn(BaseModel):
     mode: Literal["open_question", "followup"] = "open_question"
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
 
+
+
 class PromptQuestionOut(BaseModel):
+    """대화형 토론 출력"""
     question: str
     mode: str
     level: str

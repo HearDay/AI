@@ -1,6 +1,7 @@
 import asyncio
 import faiss
 import numpy as np
+from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -19,14 +20,13 @@ class AnalysisService:
         self.d = 768
         self.index = faiss.IndexFlatIP(self.d)
         self.index_to_reco_id = {}
-        self.index_lock = asyncio.Lock()  # Faiss 인덱스 접근 동기화용
+        self.index_lock = asyncio.Lock()
         self.vector_id_to_article_id = {}
 
     async def _ensure_model_loaded(self):
         """모델이 로드되지 않았다면 비동기로 로드"""
         if self.model is None:
             print("SBERT 모델을 로드합니다...")
-            # run_in_threadpool에 callable을 명시적으로 넘김
             def _load():
                 return SentenceTransformer('jhgan/ko-sroberta-multitask')
             self.model = await run_in_threadpool(_load)
@@ -34,7 +34,6 @@ class AnalysisService:
     async def encode_text(self, text: str) -> np.ndarray:
         """SBERT 임베딩을 비동기 실행 (스레드풀 사용)"""
         await self._ensure_model_loaded()
-        # model.encode는 블로킹일 수 있으니 threadpool로 실행
         embedding = await run_in_threadpool(self.model.encode, text)
         return np.asarray(embedding, dtype='float32')
 
@@ -47,7 +46,6 @@ class AnalysisService:
         print("DB로부터 Faiss 인덱스를 빌드합니다...")
         await self._ensure_model_loaded()
 
-        # 1️⃣ 모든 추천 벡터와 ID 가져오기
         query = (
             select(
                 ArticleRecommendVector.article_recommend_id,
@@ -87,7 +85,6 @@ class AnalysisService:
             print("유효한 벡터가 없습니다. 인덱스 빌드 중단.")
             return
 
-        # 2️⃣ numpy 변환 및 정규화
         vectors_np = np.array(all_vectors, dtype='float32')
         async with self.index_lock:
             await run_in_threadpool(faiss.normalize_L2, vectors_np)
@@ -95,11 +92,9 @@ class AnalysisService:
             start_idx = self.index.ntotal
             await run_in_threadpool(self.index.add, vectors_np)
 
-            # 3️⃣ reco_id 매핑
             for i, reco_id in enumerate(reco_ids):
                 self.index_to_reco_id[start_idx + i] = reco_id
 
-            # 4️⃣ article_id 매핑
             article_ids_query = (
                 select(Article.id, Article.article_recommend_id)
                 .where(Article.article_recommend_id.in_(reco_ids))
@@ -124,7 +119,6 @@ class AnalysisService:
             await run_in_threadpool(faiss.normalize_L2, vector_np)
             start_idx = self.index.ntotal
             await run_in_threadpool(self.index.add, vector_np)
-            # 여러 벡터 추가될 수 있으므로 range로 처리 (여기선 1개)
             for i in range(vector_np.shape[0]):
                 self.index_to_reco_id[start_idx + i] = reco_id
         print(f"ArticleRecommend ID {reco_id}가 인덱스 {start_idx}에 추가됨")
@@ -136,6 +130,8 @@ class AnalysisService:
         [개인화 추천]
         사용자가 읽은 여러 기사들의 SBERT 벡터 평균을 계산하고,
         그 평균 벡터를 기준으로 Faiss에서 유사 기사 검색
+        + 3일 이내 기사만 필터링
+        + 유사도 점수 기준 내림차순 정렬
         """
         print(f"\n=== [DEBUG] find_similar_documents_by_user(user_id={user_id}) ===")
 
@@ -152,7 +148,6 @@ class AnalysisService:
 
         import json
 
-        # 문자열로 저장된 벡터를 파싱 (TEXT 컬럼 대응)
         parsed_vectors = []
         for v in user_vectors:
             if isinstance(v, str):
@@ -167,7 +162,6 @@ class AnalysisService:
                 print(f"[WARN] 예상치 못한 벡터 타입: {type(v)}")
         user_vectors = parsed_vectors
 
-        # 벡터 형태 디버깅 출력
         if user_vectors:
             print(f"[DEBUG] 불러온 벡터 예시 타입={type(user_vectors[0])}, 길이={len(user_vectors[0])}")
         else:
@@ -185,10 +179,8 @@ class AnalysisService:
             elif user_arr.ndim != 2:
                 raise ValueError(f"벡터 차원 이상: ndim={user_arr.ndim}, 예시={user_arr[:3]}")
 
-            # 🚨 잘못된 차원 방어
             if user_arr.shape[1] != self.index.d:
                 print(f"[경고] 잘못된 벡터 차원 발견 ({user_arr.shape[1]} != {self.index.d}) → 필터링")
-                # index.d와 같은 차원만 남김
                 user_arr = np.array([v for v in user_vectors if len(v) == self.index.d], dtype='float32')
                 if user_arr.size == 0:
                     print("[ERROR] 유효한 벡터가 없습니다.")
@@ -201,33 +193,36 @@ class AnalysisService:
         user_profile = np.mean(user_arr, axis=0).reshape(1, -1)
         print(f"[DEBUG] user_profile shape={user_profile.shape}")
 
-        # 4️⃣ 인덱스 상태 확인
         print(f"[DEBUG] index.ntotal={self.index.ntotal}, index.d={getattr(self.index, 'd', None)}")
 
         if getattr(self.index, "d", None) is None:
             print("[ERROR] 인덱스가 초기화되지 않았습니다. load_and_build_index() 실행 필요.")
             return []
 
-        # 5️⃣ 차원 불일치 확인
         if user_profile.shape[1] != self.index.d:
             raise RuntimeError(
                 f"[차원 불일치] user_profile={user_profile.shape[1]} / index.d={self.index.d} "
                 f"→ DB 벡터 또는 모델 임베딩 차원 불일치. 인덱스 재생성 필요."
             )
 
-        # 6️⃣ 검색 (Faiss는 동기, threadpool로 실행)
+        # 4️⃣ 검색 (점수와 함께 반환)
         async with self.index_lock:
             await run_in_threadpool(faiss.normalize_L2, user_profile)
-            num_search = top_k + len(user_vectors)
+            num_search = top_k * 3  # 여유있게 검색
             D, I = await run_in_threadpool(self.index.search, user_profile, num_search)
 
-        similar_reco_ids = []
-        for faiss_index_id in I[0]:
+        # 5️⃣ 점수와 함께 reco_id 매핑 (내림차순)
+        scored_reco_ids = []
+        for score, faiss_index_id in zip(D[0], I[0]):
             reco_id = self.index_to_reco_id.get(faiss_index_id)
             if reco_id:
-                similar_reco_ids.append(reco_id)
+                scored_reco_ids.append((score, reco_id))
+        
+        # 점수 기준 내림차순 정렬
+        scored_reco_ids.sort(reverse=True, key=lambda x: x[0])
+        print(f"[DEBUG] 상위 5개 유사도 점수: {[f'{s:.4f}' for s, _ in scored_reco_ids[:5]]}")
 
-        # 7️⃣ 이미 읽은 기사 제외
+        # 6️⃣ 이미 읽은 기사 제외
         read_reco_ids_query = (
             select(Article.article_recommend_id)
             .join(UserRecentArticle, UserRecentArticle.article_id == Article.id)
@@ -236,21 +231,35 @@ class AnalysisService:
         read_reco_ids_result = await db.execute(read_reco_ids_query)
         read_reco_ids = set(read_reco_ids_result.scalars().all())
 
-        filtered_reco_ids = [rid for rid in similar_reco_ids if rid not in read_reco_ids]
-        if not filtered_reco_ids:
+        filtered_scored = [(score, rid) for score, rid in scored_reco_ids if rid not in read_reco_ids]
+        
+        if not filtered_scored:
             print(f"[DEBUG] 추천 가능한 새 기사 없음. (모두 이미 읽음)")
             return []
 
-        # 8️⃣ 추천 기사 ID 반환
+        # 7️⃣ 3일 이내 기사만 필터링 + 정렬된 순서로 반환
+        three_days_ago = datetime.now() - timedelta(days=3)
+        filtered_reco_ids = [rid for _, rid in filtered_scored]
+        
         query_similar_articles = (
-            select(Article.id)
-            .where(Article.article_recommend_id.in_(filtered_reco_ids))
-            .limit(top_k)
+            select(Article.id, Article.article_recommend_id, Article.created_at)
+            .where(
+                Article.article_recommend_id.in_(filtered_reco_ids),
+                Article.created_at >= three_days_ago
+            )
         )
         result = await db.execute(query_similar_articles)
-        recommended_article_ids = result.scalars().all()
+        recent_articles = result.all()
+        
+        # reco_id 순서 유지하면서 article_id 매핑
+        reco_to_article = {reco_id: article_id for article_id, reco_id, _ in recent_articles}
+        recommended_article_ids = [
+            reco_to_article[rid] 
+            for _, rid in filtered_scored 
+            if rid in reco_to_article
+        ][:top_k]
 
-        print(f"[DEBUG] 추천된 기사 ID 목록: {recommended_article_ids}\n")
+        print(f"[DEBUG] 추천된 기사 ID 목록 (유사도 내림차순): {recommended_article_ids}\n")
 
         return recommended_article_ids
 
@@ -259,6 +268,8 @@ class AnalysisService:
     ) -> list[int]:
         """
         주어진 기사(article_id)와 유사한 기사들을 Faiss 인덱스를 이용해 찾음
+        + 3일 이내 기사만 필터링
+        + 유사도 점수 기준 내림차순 정렬
         """
         # 1️⃣ 기준 기사 벡터 가져오기
         query = (
@@ -278,14 +289,39 @@ class AnalysisService:
         else:
             query_vector = np.array(vector_row).astype("float32")
 
-        # 2️⃣ FAISS 인덱스에서 유사 벡터 검색
-        D, I = self.index.search(np.array([query_vector]), top_k + 1)  # +1: 자기 자신 포함
-        similar_indices = I[0][1:].tolist()  # 첫 번째(자기 자신) 제외
+        # 2️⃣ FAISS 인덱스에서 유사 벡터 검색 (점수 포함)
+        async with self.index_lock:
+            query_vector_normalized = query_vector.reshape(1, -1)
+            await run_in_threadpool(faiss.normalize_L2, query_vector_normalized)
+            D, I = await run_in_threadpool(self.index.search, query_vector_normalized, top_k * 2)
 
-        # 3️⃣ ID 매핑 (벡터 인덱스 → article_id)
+        # 3️⃣ 점수와 함께 article_id 매핑 (자기 자신 제외)
+        scored_articles = []
+        for score, idx in zip(D[0], I[0]):
+            if idx in self.vector_id_to_article_id:
+                mapped_article_id = self.vector_id_to_article_id[idx]
+                if mapped_article_id != article_id:  # 자기 자신 제외
+                    scored_articles.append((score, mapped_article_id))
+
+        # 4️⃣ 3일 이내 기사만 필터링
+        three_days_ago = datetime.now() - timedelta(days=3)
+        article_ids = [aid for _, aid in scored_articles]
+        
+        query_recent = (
+            select(Article.id, Article.created_at)
+            .where(
+                Article.id.in_(article_ids),
+                Article.created_at >= three_days_ago
+            )
+        )
+        result = await db.execute(query_recent)
+        recent_article_ids = {aid for aid, _ in result.all()}
+
+        # 5️⃣ 점수 순서 유지하면서 필터링된 결과 반환
         similar_article_ids = [
-            self.vector_id_to_article_id[idx] for idx in similar_indices if idx in self.vector_id_to_article_id
-        ]
+            aid for score, aid in scored_articles 
+            if aid in recent_article_ids
+        ][:top_k]
 
         return similar_article_ids
 

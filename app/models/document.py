@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, UniqueConstraint, LargeBinary, TypeDecorator
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, UniqueConstraint, LargeBinary, TypeDecorator, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
 import numpy as np
 import json
+from datetime import datetime
 
 # ✅ Numpy 배열을 BLOB으로 저장하는 커스텀 타입
 class NumpyArray(TypeDecorator):
@@ -89,70 +90,85 @@ class JSONEncodedList(TypeDecorator):
 # --- 1. 백엔드가 관리하는 'Article' 테이블 ---
 class Article(Base):
     __tablename__ = "article"
-    
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     article_category = Column(String(100))
-    description = Column(Text, nullable=False) # (기사 본문)
+    description = Column(Text, nullable=False)
     image_url = Column(String(2083))
     origin_link = Column(String(2083), nullable=False)
     publish_date = Column(DateTime(timezone=True), nullable=False)
     title = Column(Text, nullable=False)
-    
-    # 1:1 관계 (Article <-> ArticleDetail)
-    article_detail_id = Column(Integer)
-    
-    # 1:1 관계 (Article <-> ArticleRecommend)
+    article_detail_id = Column(Integer) 
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="article", uselist=False)
-
     __table_args__ = (
         Index('uq_original_url_prefix', 'origin_link', unique=True, mysql_length=255),
     )
 
-
-# --- 2. AI가 관리하는 'ArticleRecommend' (작업 상태) ---
 class ArticleRecommend(Base):
     __tablename__ = "article_recommend"
-    
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
     status = Column(String(50), default='PENDING', index=True, nullable=False) 
-    
     article = relationship("Article", back_populates="recommend", uselist=False)
     keywords = relationship("ArticleRecommendKeyword", back_populates="recommend")
     vector = relationship("ArticleRecommendVector", back_populates="recommend", uselist=False)
 
-
-# --- 3. AI가 관리하는 'ArticleRecommendKeyword' (LLM 키워드) ---
 class ArticleRecommendKeyword(Base):
     __tablename__ = "article_recommend_keywords"
-    
     id = Column(Integer, primary_key=True, index=True)
     keyword = Column(String(100), index=True)
-    
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="keywords")
 
-
-# --- 4. AI가 관리하는 'ArticleRecommendVector' (SBERT 벡터) ---
 class ArticleRecommendVector(Base):
     __tablename__ = "article_recommend_vector"
-    
     id = Column(Integer, primary_key=True, index=True)
-    
-    # ✅ 옵션 1: BLOB으로 저장 (빠르고 용량 적음, 바이너리 저장)
-    # sbert_vector = Column(NumpyArray, nullable=False)
-    
-    # ✅ 옵션 2: TEXT로 JSON 저장 (디버깅 쉽고 안전, 권장)
-    sbert_vector = Column(JSONEncodedList, nullable=False)
-    
+    sbert_vector = Column(JSON, nullable=False)
     article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
     recommend = relationship("ArticleRecommend", back_populates="vector")
-
     __table_args__ = (
         UniqueConstraint('article_recommend_id', name='uq_reco_id_vector'),
     )
+
+# 👇👇👇 [추가됨] 백엔드의 User 관련 테이블 3개 정의 👇👇👇
+
+class User(Base):
+    """
+    백엔드가 관리하는 User 테이블. 
+    AI 서버는 이 테이블의 id만 참조합니다.
+    """
+    __tablename__ = "users" # (테이블 이름이 'users'라고 가정)
+    id = Column(Integer, primary_key=True, index=True)
+    # (다른 컬럼들은 AI 서버가 알 필요 없음)
+    
+    # User가 UserCategory를 여러 개 가짐
+    categories = relationship("UserCategory", back_populates="user")
+    # User가 UserRecentArticle을 여러 개 가짐
+    recent_articles = relationship("UserRecentArticle", back_populates="user")
+
+class UserCategory(Base):
+    """
+    사용자가 선호하는 카테고리 (LLM 콜드 스타트용)
+    """
+    __tablename__ = "user_category"
+    id = Column(Integer, primary_key=True, index=True)
+    category_name = Column(String(100)) # (컬럼명이 'category_name'이라고 가정)
+    
+    user_id = Column(Integer, ForeignKey("users.id"))
+    user = relationship("User", back_populates="categories")
+
+class UserRecentArticle(Base):
+    """
+    사용자가 최근 읽은 기사 (SBERT 추천용)
+    """
+    __tablename__ = "user_recent_article"
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user_id = Column(Integer, ForeignKey("users.id"))
+    user = relationship("User", back_populates="recent_articles")
+    
+    article_id = Column(Integer, ForeignKey("article.id"))

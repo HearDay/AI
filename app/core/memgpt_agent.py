@@ -1,11 +1,16 @@
 from typing import Any, Dict, Tuple, Optional
 import sys, os
 
+# -----------------------------------------------------------
+# MemGPT 경로 설정 
+# -----------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MEMGPT_PATH = os.path.join(BASE_DIR, "MemGPT")
-if MEMGPT_PATH not in sys.path:
-    sys.path.append(MEMGPT_PATH)
+MEMGPT_ROOT = os.path.join(BASE_DIR, "MemGPT")         # MemGPT 루트 폴더
+MEMGPT_SRC = os.path.join(MEMGPT_ROOT, "memgpt")        # 실제 코드 폴더
 
+for path in [MEMGPT_ROOT, MEMGPT_SRC]:
+    if path not in sys.path:
+        sys.path.append(path)
 
 # -----------------------------------------------------------
 # MemGPT 다중 경로 임포트 (버전별 구조 차이 대응)
@@ -16,15 +21,18 @@ _get_provider: Optional[Any] = None
 _memgpt_import_error: Optional[Exception] = None
 
 try:
-    from memgpt.agent import Agent  # type: ignore
-    from memgpt.memory import MemoryStore  # type: ignore
-    from memgpt.providers import get_provider as _get_provider  # type: ignore
+
+    from MemGPT.memgpt.agent import Agent  # type: ignore
+    from MemGPT.memgpt.memory import MemoryStore  # type: ignore
+    from MemGPT.memgpt.providers import get_provider as _get_provider  # type: ignore
+
 except ImportError as e1:
     try:
-        from memgpt.agent.agent import Agent  # type: ignore
-        from memgpt.memory.memory import MemoryStore  # type: ignore
+        from memgpt.agent import Agent  # type: ignore
+        from memgpt.memory import MemoryStore  # type: ignore
         from memgpt.providers import get_provider as _get_provider  # type: ignore
     except ImportError as e2:
+        # ✅ 예비 2: core 폴더 구조 대응
         try:
             from memgpt.core.agent import Agent  # type: ignore
             from memgpt.core.memory import MemoryStore  # type: ignore
@@ -33,6 +41,9 @@ except ImportError as e1:
             _memgpt_import_error = e3
 
 
+# -----------------------------------------------------------
+# MemGPT 로드 확인
+# -----------------------------------------------------------
 def ensure_memgpt() -> None:
     """MemGPT가 로드되지 않았다면 사용자에게 설치/버전 안내."""
     if Agent is None or MemoryStore is None or _get_provider is None:

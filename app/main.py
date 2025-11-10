@@ -4,8 +4,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'M
 from fastapi import FastAPI, Form
 import asyncio
 from app.core.database import engine, Base, SessionLocal
-from app.models import document
-from app.api.endpoints import documents as recommend_router
+from app.models import document 
+from app.api.endpoints.documents import recommend_router 
+from app.api.endpoints.documents import router as internal_router
 from app.services.analysis_service import analysis_service
 from app.core.prompt_templates import build_open_question_prompt
 from app.services.question_generator import generate_question
@@ -23,18 +24,9 @@ async def on_startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # 2. Faiss 인덱스 백그라운드 빌드
-    async def _build_faiss_background():
-        """비동기 백그라운드에서 Faiss 인덱스 빌드"""
-        try:
-            print("FAISS 백그라운드 인덱스 빌드 시작...")
-            async with SessionLocal() as session:
-                await analysis_service.load_and_build_index(session)
-            print("FAISS 인덱스 빌드 완료.")
-        except Exception as e:
-            print(f"FAISS 인덱스 빌드 중 오류 발생: {e}")
-
-    asyncio.create_task(_build_faiss_background())
+    # 2. Faiss 인덱스 빌드 (analysis_service.py)
+    async with SessionLocal() as session:
+        await analysis_service.load_and_build_index(session)
 
     # 3. H2O-Danube-1.8B Chat 모델 로드
     async def _load_h2o_model():
@@ -49,7 +41,8 @@ async def on_startup():
 # ======================================================
 # 라우터 등록
 # ======================================================
-app.include_router(recommend_router.router)
+app.include_router(internal_router)
+app.include_router(recommend_router)
 app.include_router(feedback.router)
 
 

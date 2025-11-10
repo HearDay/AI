@@ -37,6 +37,7 @@ class ArticleResponse(BaseModel):
     id: int
     title: str
     origin_link: str
+    image_url: str
     
     class Config:
         from_attributes = True
@@ -209,7 +210,7 @@ async def get_documents_by_categories(
 )
 async def get_user_recommendations(
     user_id: int,
-    limit: int = 20,
+    limit: int = 5,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -269,5 +270,12 @@ async def get_user_recommendations(
         sbert_query = select(Article).where(Article.id.in_(similar_article_ids))
         result = await db.execute(sbert_query)
         articles = result.scalars().all()
-            
-        return articles
+
+        article_map = {article.id: article for article in articles}
+        ordered_articles = [
+            article_map[article_id] 
+            for article_id in similar_article_ids  # AnalysisService가 반환한 순서 유지
+            if article_id in article_map
+        ]
+
+        return ordered_articles

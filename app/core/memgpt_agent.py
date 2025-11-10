@@ -21,24 +21,18 @@ _get_provider: Optional[Any] = None
 _memgpt_import_error: Optional[Exception] = None
 
 try:
-
-    from MemGPT.memgpt.agent import Agent  # type: ignore
-    from MemGPT.memgpt.memory import MemoryStore  # type: ignore
-    from MemGPT.memgpt.providers import get_provider as _get_provider  # type: ignore
-
+    # 최신 버전 (0.3+)
+    from memgpt.agent_store.agent import Agent  # type: ignore
+    from memgpt.agent_store.memory import MemoryStore  # type: ignore
+    from memgpt.llm_api.providers import get_provider as _get_provider  # type: ignore
 except ImportError as e1:
     try:
+        # 이전 버전 (0.2.x)
         from memgpt.agent import Agent  # type: ignore
         from memgpt.memory import MemoryStore  # type: ignore
         from memgpt.providers import get_provider as _get_provider  # type: ignore
     except ImportError as e2:
-        # core 폴더 구조 대응
-        try:
-            from memgpt.core.agent import Agent  # type: ignore
-            from memgpt.core.memory import MemoryStore  # type: ignore
-            from memgpt.core.providers import get_provider as _get_provider  # type: ignore
-        except ImportError as e3:
-            _memgpt_import_error = e3
+        _memgpt_import_error = e2
 
 
 # -----------------------------------------------------------
@@ -78,10 +72,7 @@ def _ensure_runtime_ready() -> None:
 
 
 def build_agent(user_id: str, session_id: str, system_prompt: str) -> Any:
-    """
-    세션별 Agent를 생성.
-    - system_prompt는 외부에서 주입(prompt_templates 등)
-    """
+    """세션별 Agent 생성"""
     _ensure_runtime_ready()
     return Agent(
         provider=_PROVIDER,
@@ -94,7 +85,6 @@ def build_agent(user_id: str, session_id: str, system_prompt: str) -> Any:
 
 
 def get_agent(user_id: str, session_id: str, system_prompt: str) -> Any:
-    """기존 Agent를 반환하거나 없으면 새로 생성."""
     key = (user_id, session_id)
     if key not in _AGENTS:
         _AGENTS[key] = build_agent(user_id, session_id, system_prompt)
@@ -102,17 +92,12 @@ def get_agent(user_id: str, session_id: str, system_prompt: str) -> Any:
 
 
 def reset_agent(user_id: str, session_id: str, system_prompt: str) -> None:
-    """세션의 Agent를 재생성."""
     key = (user_id, session_id)
     _AGENTS[key] = build_agent(user_id, session_id, system_prompt)
 
 
 def safe_chat(agent: Any, message: str) -> dict:
-    """
-    Agent에 안전하게 질의.
-    - MemGPT 미설치/로드 실패 시 RuntimeError 발생 (라우터에서 503 처리)
-    - 내부 예외 발생 시 fallback 응답 반환 (서버 중단 방지)
-    """
+    """Agent에 안전하게 질의"""
     ensure_memgpt()
     try:
         reply = agent.chat(message)

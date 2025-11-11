@@ -30,7 +30,6 @@ async def on_startup():
     async with SessionLocal() as session:
         await analysis_service.load_and_build_index(session)
 
-    print("MemGPT 구조는 비활성화 상태로 유지 중 (Upstage API 기반 LLM 사용)")
 
 
 # ======================================================

@@ -1,66 +1,40 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict
 
-# ==============================================
-# 피드백 / 요약 / 키워드 스키마
-# ==============================================
-
-class FeedbackIn(BaseModel):
-    user_id: str = "demo"
-    question: str
-    user_answer: str
-    rubric: Optional[str] = None
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
-
-
-class FeedbackOut(BaseModel):
-    score: int = Field(ge=0, le=100)
-    strengths: List[str]
-    improvements: List[str]
-    tip: str
-    followup: str
-
-
-class SummarizeIn(BaseModel):
-    user_id: str = "demo"
-    text: str
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
-
-
-class SummarizeOut(BaseModel):
-    summary: str
-    open_questions: List[str]
-    keywords: List[str]
-
-
-class KeywordsIn(BaseModel):
-    text: str
-    top_k: int = 8
-
-
-class KeywordsOut(BaseModel):
-    keywords: List[str]
-
 
 # ==============================================
-# 토론 / AI 대화용 스키마 (discussion 엔드포인트)
+# 뉴스 기반 탐구형 질문 생성 (prompt/question)
 # ==============================================
-
 class PromptQuestionIn(BaseModel):
-    """대화형 토론 입력"""
-    discussionId: Optional[int] = None
-    nickname: Optional[str] = None
-    articleTitle: Optional[str] = None
-    content: str
-    previousMessages: Optional[List[Dict[str, str]]] = []
-    message: Optional[str] = None
-    mode: Literal["open_question", "followup"] = "open_question"
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
-
+    """뉴스 요약문 기반 탐구형 질문 생성 입력"""
+    content: str                     # 뉴스 내용 또는 요약문
+    mode: Literal["open_question", "followup"] = "open_question"  # 질문 타입
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"  # 난이도
 
 
 class PromptQuestionOut(BaseModel):
-    """대화형 토론 출력"""
-    question: str
-    mode: str
-    level: str
+    """LLM이 생성한 질문 출력"""
+    question: str  # 모델이 생성한 질문
+    mode: str      # open_question / followup
+    level: str     # beginner / intermediate / advanced
+
+
+# ==============================================
+# 토론형 대화 (feedback/discussion)
+# ==============================================
+class DiscussionIn(BaseModel):
+    """AI 토론 입력"""
+    user_id: str = "demo_user"           # 사용자 식별자
+    session_id: str = "default_session"  # 대화 세션 ID
+    content: str                         # 뉴스 내용 또는 기사 일부
+    message: str                         # 사용자의 발화 (응답/의견)
+    mode: Literal["open_question", "followup"] = "open_question"  # 대화 모드
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"  # 대화 난이도
+
+
+class DiscussionOut(BaseModel):
+    """AI 토론 응답"""
+    reply: str                 # 모델이 만든 최종 답변 (피드백 + 후속질문 포함)
+    fallback: bool = False     # MemGPT 예외 시 임시 응답 여부
+    user_id: str = "demo_user" # 사용자 식별자
+    session_id: str = "default_session"  # 세션 ID

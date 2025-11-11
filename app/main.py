@@ -57,7 +57,7 @@ app.include_router(feedback.router)
 # ======================================================
 @app.post("/prompt/question")
 def prompt_question(
-    mode: str = Form("open"),
+    mode: str = Form("open_question"),
     level: str = Form("beginner"),
     context: str = Form(...),
 ):

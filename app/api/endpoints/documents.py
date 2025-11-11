@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from typing import List, Optional
 from pydantic import BaseModel, Field
 import datetime
 from sqlalchemy import func, desc 
-
+from typing import Dict
 from app.core.database import get_db, SessionLocal
 from app.models.document import (
     Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector,
@@ -174,35 +174,103 @@ async def get_similar_articles(
     return articles
 
 @recommend_router.get(
-    "/category/", 
-    response_model=List[ArticleResponse], 
-    summary="[LLM 추천] 여러 카테고리 기사 목록 (다중 입력)"
+    "/users/{user_id}/recommendations/category/{category_name}",
+    response_model=List[ArticleResponse],
+    summary="[카테고리별 추천] 특정 카테고리의 사용자 맞춤 추천"
 )
-async def get_documents_by_categories(
-    categories: List[str] = Query(..., description="검색할 카테고리 목록"),
-    limit: int = 20,
+async def get_user_recommendations_by_specific_category(
+    user_id: int,
+    category_name: str,
+    limit: int = 5,
     db: AsyncSession = Depends(get_db)
 ):
-    query = (
-        select(Article)
-        .join(Article.recommend)
-        .join(ArticleRecommend.keywords)
-        .where(ArticleRecommendKeyword.keyword.in_(categories))
-        .where(ArticleRecommend.status == 'COMPLETED')
-        .order_by(Article.publish_date.desc())
-        .limit(limit)
-    )
+    """
+    사용자 ID와 카테고리를 받아서 해당 카테고리의 추천 기사를 반환합니다.
     
-    result = await db.execute(query)
-    articles = result.scalars().unique().all()
+    - 10개 이하: 해당 카테고리의 LLM 기반 추천
+    - 10개 초과: SBERT 유사도 기반으로 해당 카테고리 기사만 필터링하여 추천
+    """
     
-    if not articles:
-        raise HTTPException(
-            status_code=404, 
-            detail="선택한 카테고리에 해당하는 기사를 찾을 수 없습니다."
-        )
+    # 1. 사용자가 읽은 기사 수 확인
+    count_query = select(func.count(UserRecentArticle.id))\
+                    .where(UserRecentArticle.user_id == user_id)
+    read_count = (await db.execute(count_query)).scalar_one_or_none() or 0
+
+    if read_count <= 10:
+        # 2. (LLM 로직) 10개 이하: 선호 카테고리 기반 추천
+        print(f"User {user_id}: LLM 기반 '{category_name}' 카테고리 추천 (읽은 기사 {read_count}개)")
         
-    return articles
+        llm_query = (
+            select(Article)
+            .join(Article.recommend)
+            .join(ArticleRecommend.keywords)
+            .options(
+                selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
+            )
+            .where(ArticleRecommendKeyword.keyword == category_name)
+            .where(ArticleRecommend.status == 'COMPLETED')
+            .order_by(Article.publish_date.desc())
+            .limit(limit)
+        )
+        result = await db.execute(llm_query)
+        articles = result.scalars().unique().all()
+        
+        if not articles:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"'{category_name}' 카테고리에 맞는 기사가 없습니다."
+            )
+        
+        return articles
+
+    else:
+        # 3. (SBERT 로직) 10개 초과: 유사도 기반 + 카테고리 필터링
+        print(f"User {user_id}: SBERT 기반 '{category_name}' 카테고리 추천 (읽은 기사 {read_count}개)")
+
+        # 충분한 양의 유사 기사 조회
+        similar_article_ids = await analysis_service.find_similar_documents_by_user(
+            db, user_id, top_k=limit * 5
+        )
+    
+        if not similar_article_ids:
+            raise HTTPException(
+                status_code=404,
+                detail="추천할 수 있는 유사 기사가 없습니다."
+            )
+        
+        # 유사 기사 중에서 해당 카테고리에 속하는 것만 필터링
+        sbert_query = (
+            select(Article)
+            .join(Article.recommend)
+            .join(ArticleRecommend.keywords)
+            .options(
+                selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
+            )
+            .where(Article.id.in_(similar_article_ids))
+            .where(ArticleRecommendKeyword.keyword == category_name)
+            .where(ArticleRecommend.status == 'COMPLETED')
+        )
+        result = await db.execute(sbert_query)
+        articles = result.scalars().unique().all()
+
+        if not articles:
+            raise HTTPException(
+                status_code=404,
+                detail=f"'{category_name}' 카테고리에 맞는 유사 기사가 없습니다."
+            )
+
+        # 기사 ID를 키로 하는 맵 생성
+        article_map = {article.id: article for article in articles}
+        
+        # 유사도 순서를 유지하면서 정렬
+        ordered_articles = [
+            article_map[article_id] 
+            for article_id in similar_article_ids
+            if article_id in article_map
+        ]
+
+        # limit 개수만큼만 반환
+        return ordered_articles[:limit]
 
 @recommend_router.get(
     "/users/{user_id}/recommendations",

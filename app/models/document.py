@@ -118,9 +118,12 @@ class ArticleRecommend(Base):
 
 class ArticleRecommendKeyword(Base):
     __tablename__ = "article_recommend_keywords"
-    id = Column(Integer, primary_key=True, index=True)
-    keyword = Column(String(100), index=True)
-    article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"))
+    
+    # 복합 키 설정: article_recommend_id와 keyword를 함께 primary key로 사용
+    article_recommend_id = Column(Integer, ForeignKey("article_recommend.id"), primary_key=True)
+    keyword = Column(String(100), primary_key=True, index=True)
+    
+    # relationship 정의
     recommend = relationship("ArticleRecommend", back_populates="keywords")
 
 class ArticleRecommendVector(Base):

@@ -1,6 +1,5 @@
 import sys, os
-
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Body
 import asyncio
 from app.core.database import engine, Base, SessionLocal
 from app.models import document 
@@ -10,12 +9,16 @@ from app.services.analysis_service import analysis_service
 from app.core.prompt_templates import build_open_question_prompt
 from app.services.question_generator import generate_question
 from app.services import feedback
-from app.services.llm import LLMClient  
 
-# ======================================================
+
+#  ======================================================
 #  앱 초기화
 # ======================================================
 app = FastAPI(title="Hearday AI 토론 & 추천 시스템")
+
+# 전역 모델 클라이언트 선언 (유지)
+_llm_client = None
+
 
 @app.on_event("startup")
 async def on_startup():
@@ -27,14 +30,7 @@ async def on_startup():
     async with SessionLocal() as session:
         await analysis_service.load_and_build_index(session)
 
-    # 3. H2O-Danube-1.8B Chat 모델 로드
-    async def _load_h2o_model():
-        print("H2O-Danube-1.8B Chat 모델 로드 중... (약 1~2분 소요)")
-        global _llm_client
-        _llm_client = await asyncio.to_thread(LLMClient)
-        print("모델 로드 완료. 시연 중 즉시 응답 가능합니다.")
-
-    asyncio.create_task(_load_h2o_model())
+    print("MemGPT 구조는 비활성화 상태로 유지 중 (Upstage API 기반 LLM 사용)")
 
 
 # ======================================================
@@ -50,10 +46,15 @@ app.include_router(feedback.router)
 # ======================================================
 @app.post("/prompt/question")
 def prompt_question(
-    mode: str = Form("open"),
+    mode: str = Form("open_question"),
     level: str = Form("beginner"),
-    context: str = Form(...),
+    context: str = Form(...)
 ):
-    """LLM 기반 뉴스 토론 질문 생성"""
+    """
+    LLM 기반 뉴스 토론 질문 생성 (Upstage Solar API 버전)
+    - mode: open_question / followup
+    - level: beginner / intermediate / advanced
+    - context: 뉴스 요약 또는 사용자 발언
+    """
     question = generate_question(context, mode=mode, level=level)
     return {"mode": mode, "level": level, "question": question}

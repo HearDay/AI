@@ -16,4 +16,6 @@ AI/
 # Key
 app/core/hearday-4b26b1f78a13.json
 hearday-api-key.json
-*.json
+.env.local
+
+# *.json

@@ -33,6 +33,7 @@ STANDARD_CANDIDATES = [
     "정치"
 ]
 
+# crack
 class ArticleResponse(BaseModel):
     id: int
     title: str

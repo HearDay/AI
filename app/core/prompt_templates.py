@@ -1,108 +1,85 @@
-"""
-레벨별(초급/중급/심화) 탐구형 질문 템플릿 + 자연스러운 대화 톤 지침.
-- beginner : 사실 이해
-- intermediate : 원인/영향
-- advanced : 대안/가치판단
-"""
+from app.services.llm import run_llm
+from app.core.prompt_templates import CONVERSATIONAL_STYLE, LEVEL_GUIDES
 
-# ------------------------------------------------------------
-# 레벨별 가이드라인 정의
-# ------------------------------------------------------------
-LEVEL_GUIDES = {
-    "beginner": """[레벨 가이드]
-- 사실 이해 중심(누가, 언제, 어디서, 무엇을)
-- 문장은 짧고 명료하게
-- 판단을 보류하고 중립적으로 표현
-""",
-    "intermediate": """[레벨 가이드]
-- 원인/영향 중심(왜, 누구에게 어떤 영향)
-- 단기/장기 관점 구분
-- 반례를 조심스럽게 제시
-""",
-    "advanced": """[레벨 가이드]
-- 대안/가치판단 중심(해결책, 원칙, 트레이드오프)
-- 수용 가능한 타협안과 리스크 제시
-- 근거 유형(통계, 전문가, 사례) 포함
-"""
-}
 
-# ------------------------------------------------------------
-# 대화 톤 지침
-# ------------------------------------------------------------
-CONVERSATIONAL_STYLE = """[대화 톤 지침]
-- 사람처럼 자연스럽게, 과장·명령조 금지.
-- 간단한 추임새 허용: "음,", "그럴 수도 있겠네요.", "좋은 생각이에요."
-- 1~2문장 단락, 공손하고 중립적인 어조 유지.
-- 문장은 질문 또는 대화로 끝나도록 한다.
-"""
+def _extract_keywords(text: str, top_k: int = 5):
+    """간단한 핵심 단어 추출"""
+    words = [w.strip(",.!?") for w in text.split() if len(w) > 1]
+    seen = []
+    for w in words:
+        if w not in seen:
+            seen.append(w)
+        if len(seen) >= top_k:
+            break
+    return seen
 
-# ------------------------------------------------------------
-# 숫자형 레벨 매핑 함수
-# ------------------------------------------------------------
-def map_level_to_category(level: int) -> str:
+
+def generate_question(context: str, mode: str = "open_question", level: str = "beginner") -> str:
     """
-    숫자형 레벨(1~6)을 문자열 카테고리(beginner/intermediate/advanced)로 변환
+    뉴스/토론 질문 생성기
+    mode: 'open_question' (첫 질문) or 'followup' (후속 질문)
     """
-    if level in [1, 2]:
-        return "beginner"
-    elif level in [3, 4]:
-        return "intermediate"
-    elif level in [5, 6]:
-        return "advanced"
-    else:
-        return "beginner"  # 기본값
+    guide = LEVEL_GUIDES.get(level, LEVEL_GUIDES["beginner"])
+    keywords = _extract_keywords(context)
+    hint = ", ".join(keywords) if keywords else "주제"
 
-# ------------------------------------------------------------
-# 탐구형 질문 프롬프트 생성 함수
-# ------------------------------------------------------------
-from typing import Union
+    if mode == "open":
+        mode = "open_question"
 
-def build_open_question_prompt(summary: str, level: Union[int, str] = "beginner") -> str:
-
-    """
-    뉴스 요약문을 받아서 레벨별 탐구형 질문을 한 문장으로 생성하는 기본 프롬프트.
-    숫자형(1~6) 또는 문자열("beginner"/"intermediate"/"advanced") 입력을 모두 지원.
-    """
-    # 숫자형 레벨도 자동 매핑 처리
-    if isinstance(level, int):
-        lvl = map_level_to_category(level)
-    else:
-        lvl = (level or "beginner").lower()
-
-    guide = LEVEL_GUIDES.get(lvl, LEVEL_GUIDES["beginner"])
-
-    return f"""너는 사용자의 뉴스 이해를 돕는 대화형 토론 파트너이자 질문 설계자다.
-- 먼저 뉴스 내용을 바탕으로 자연스러운 짧은 피드백을 한 문장 생성하고,
-- 이어 탐구형 질문을 한 문장 덧붙여라.
-
+    if mode == "open_question":
+        system_prompt = f"""너는 '뉴스 토론 파트너' 역할의 AI다.
 {CONVERSATIONAL_STYLE}
 {guide}
 
-[작업]
-- 아래 뉴스 요약을 읽고, 사용자와 대화하듯 한~두 문장의 개방형 탐구 질문을 만들어라.
-- '~어떨까요?', '~보시나요?', '~생각하시나요?' 같은 부드러운 형태 허용.
-- 유도·편향 금지, 초보 사용자도 이해할 수 있는 표현 사용.
+[역할 요약]
+- 사용자가 뉴스 요약을 기반으로 생각을 확장할 수 있도록 돕는다.
+- 단정, 평가, 명령, 권유는 금지한다.
+- 대화는 부드럽게, 자연스럽게 유도한다.
 
-[뉴스 요약]
-{summary.strip()}
+[출력 형식]
+- 반드시 한 문장으로, 질문으로만 끝내라.
+- "~어떨까요?", "~보시나요?", "~가능할까요?" 형태의 어미를 사용한다.
+- 번호, 괄호, 따옴표, 메타표현 금지.
+
+[작업 지시]
+- 아래 뉴스 요약을 읽고 '{hint}'와 관련된 개방형 질문을 만들어라.
 """
+        user_prompt = f"[뉴스 요약]\n{context}"
 
-# ------------------------------------------------------------
-# 대화체 후처리 함수
-# ------------------------------------------------------------
-def conversational_rewrite(text: str) -> str:
-    """
-    모델이 다소 딱딱한 어투로 답했을 때, 자연스럽게 다듬기 위한 후처리.
-    """
-    # 형식적 명령문 -> 제안형 문장으로 변환
-    text = (
-        text.replace("해야 한다", "하면 좋겠습니다")
-            .replace("하라", "해 볼까요")
-            .replace("하십시오", "해 볼까요")
-            .replace("것이다", "것 같아요")
-            .replace("입니다.", "인 것 같아요.")
-            .replace("라고 생각합니다", "라고 볼 수도 있겠네요")
-    )
-    # 불필요한 기호, 공백 제거
-    lines = [l.strip(" -•") for l in text.splitlines() if l.strip()]
-    return " ".join(lines)
+    elif mode == "followup":
+        system_prompt = f"""너는 '뉴스 토론 파트너' 역할의 AI다.
+{CONVERSATIONAL_STYLE}
+{guide}
+
+[역할 요약]
+- 사용자의 발언을 읽고, 공감 + 논리 확장 질문을 제시한다.
+- 공감은 부드럽고 간결하게, 질문은 관련 주제 내에서 이어지게 한다.
+
+[출력 형식]
+- 2문장 이내 (공감 1 + 질문 1)
+- "~어떨까요?", "~생각하시나요?", "~가능할까요?" 형태로 마무리.
+- "좋아요", "알겠습니다" 같은 패턴 금지.
+
+[작업 지시]
+- 사용자의 발언을 바탕으로 '{hint}'와 연관된 후속 질문을 만들어라.
+"""
+        user_prompt = f"[사용자 발언]\n{context}"
+
+    else:
+        raise ValueError("mode must be 'open_question' or 'followup'")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        reply = run_llm(messages, max_tokens=250, temperature=0.65)
+        reply = reply.strip().split("\n")[0].strip()
+        reply = reply.strip(" \"'")
+        if not reply.endswith(("?", "?!", "!?")):
+            reply += "?"
+        return reply
+    except Exception as e:
+        print(f"[question_generator] LLM call failed: {e}")
+        return "좋은 생각이에요. 이 주제에서 특히 중요한 부분은 뭐라고 생각하시나요?"

@@ -1,4 +1,4 @@
-from app.services.llm import run_llm
+from app.services.llm_api import run_llm  # 🔹 Upstage Solar API 버전
 from app.core.prompt_templates import CONVERSATIONAL_STYLE, LEVEL_GUIDES
 
 
@@ -15,24 +15,15 @@ def _extract_keywords(text: str, top_k: int = 5):
 
 
 def generate_question(context: str, mode: str = "open_question", level: str = "beginner") -> str:
-    """
-    뉴스/토론 질문 생성기
-    mode: 'open_question' (첫 질문) or 'followup' (후속 질문)
-    """
-    # -----------------------------
-    # 기본 설정
-    # -----------------------------
+    """뉴스/토론 질문 생성기 (Solar API 기반)"""
     guide = LEVEL_GUIDES.get(level, LEVEL_GUIDES["beginner"])
     keywords = _extract_keywords(context)
     hint = ", ".join(keywords) if keywords else "주제"
 
-    # 모드 별칭 보정
+    # 모드 정규화
     if mode == "open":
         mode = "open_question"
 
-    # -----------------------------
-    # open_question (첫질문)
-    # -----------------------------
     if mode == "open_question":
         system_prompt = f"""너는 '뉴스 토론 파트너' 역할의 AI다.
 {CONVERSATIONAL_STYLE}
@@ -53,9 +44,6 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
 """
         user_prompt = f"[뉴스 요약]\n{context}"
 
-    # -----------------------------
-    # followup (후속질문)
-    # -----------------------------
     elif mode == "followup":
         system_prompt = f"""너는 '뉴스 토론 파트너' 역할의 AI다.
 {CONVERSATIONAL_STYLE}
@@ -78,9 +66,7 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
     else:
         raise ValueError("mode must be 'open_question' or 'followup'")
 
-    # -----------------------------
-    # 메시지 구성 및 LLM 실행
-    # -----------------------------
+    # Upstage Solar API 메시지 형식
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -89,15 +75,12 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
     try:
         reply = run_llm(messages, max_tokens=250, temperature=0.65)
         reply = reply.strip().split("\n")[0].strip()
-
-        # 불필요한 인용부호, 마침표 제거
         reply = reply.strip(" \"'")
 
-        # 끝맺음 처리
         if not reply.endswith(("?", "?!", "!?")):
             reply += "?"
         return reply
 
     except Exception as e:
-        print(f"[question_generator] Error: {e}")
+        print(f"[question_generator] LLM call failed: {e}")
         return "좋은 생각이에요. 이 주제에서 특히 중요한 부분은 뭐라고 생각하시나요?"

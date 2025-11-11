@@ -28,10 +28,12 @@ torch
 faiss-cpu
 
 # AI 토론 모듈
-# MemGPT 관련
+# LettA (MemGPT) + Upstage Solar API 
 letta
 sqlite-vec
 tiktoken
+letta>=0.11.7
+requests>=2.31.0
 
 
 

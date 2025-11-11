@@ -40,9 +40,7 @@ CONVERSATIONAL_STYLE = """[대화 톤 지침]
 # 숫자형 레벨 매핑 함수
 # ------------------------------------------------------------
 def map_level_to_category(level: int) -> str:
-    """
-    숫자형 레벨(1~6)을 문자열 카테고리(beginner/intermediate/advanced)로 변환
-    """
+    """숫자형 레벨(1~6)을 문자열 카테고리(beginner/intermediate/advanced)로 변환"""
     if level in [1, 2]:
         return "beginner"
     elif level in [3, 4]:
@@ -50,17 +48,15 @@ def map_level_to_category(level: int) -> str:
     elif level in [5, 6]:
         return "advanced"
     else:
-        return "beginner"  # 기본값
+        return "beginner"
 
 # ------------------------------------------------------------
 # 탐구형 질문 프롬프트 생성 함수
 # ------------------------------------------------------------
-def build_open_question_prompt(summary: str, level: int | str = "beginner") -> str:
-    """
-    뉴스 요약문을 받아서 레벨별 탐구형 질문을 한 문장으로 생성하는 기본 프롬프트.
-    숫자형(1~6) 또는 문자열("beginner"/"intermediate"/"advanced") 입력을 모두 지원.
-    """
-    # 숫자형 레벨도 자동 매핑 처리
+from typing import Union
+
+def build_open_question_prompt(summary: str, level: Union[int, str] = "beginner") -> str:
+    """뉴스 요약문을 받아 레벨별 탐구형 질문을 한 문장으로 생성"""
     if isinstance(level, int):
         lvl = map_level_to_category(level)
     else:
@@ -68,7 +64,10 @@ def build_open_question_prompt(summary: str, level: int | str = "beginner") -> s
 
     guide = LEVEL_GUIDES.get(lvl, LEVEL_GUIDES["beginner"])
 
-    return f"""너는 사용자의 뉴스 이해를 돕는 대화형 토론 파트너다.
+    return f"""너는 사용자의 뉴스 이해를 돕는 대화형 토론 파트너이자 질문 설계자다.
+- 먼저 뉴스 내용을 바탕으로 자연스러운 짧은 피드백을 한 문장 생성하고,
+- 이어 탐구형 질문을 한 문장 덧붙여라.
+
 {CONVERSATIONAL_STYLE}
 {guide}
 
@@ -85,10 +84,7 @@ def build_open_question_prompt(summary: str, level: int | str = "beginner") -> s
 # 대화체 후처리 함수
 # ------------------------------------------------------------
 def conversational_rewrite(text: str) -> str:
-    """
-    모델이 다소 딱딱한 어투로 답했을 때, 자연스럽게 다듬기 위한 후처리.
-    """
-    # 형식적 명령문 -> 제안형 문장으로 변환
+    """모델이 딱딱한 어투로 답했을 때 자연스럽게 다듬기"""
     text = (
         text.replace("해야 한다", "하면 좋겠습니다")
             .replace("하라", "해 볼까요")
@@ -97,6 +93,5 @@ def conversational_rewrite(text: str) -> str:
             .replace("입니다.", "인 것 같아요.")
             .replace("라고 생각합니다", "라고 볼 수도 있겠네요")
     )
-    # 불필요한 기호, 공백 제거
     lines = [l.strip(" -•") for l in text.splitlines() if l.strip()]
     return " ".join(lines)

@@ -35,8 +35,6 @@ tiktoken
 letta>=0.11.7
 requests>=2.31.0
 
-
-
 # STT / TTS
 google-cloud-speech
 google-cloud-texttospeech

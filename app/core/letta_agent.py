@@ -1,41 +1,33 @@
-from typing import Any, Dict, Tuple
-from letta.agent import Agent
-from letta.orm.user import User
-from letta.schemas.agent import AgentState
-from letta.schemas.llm_config import LLMConfig
+from typing import Dict, Tuple
+from app.services.llm_memory_bridge import HybridMemoryAgent
 
-#LettA 내부에서 기본 인터페이스 자동 처리
-_AGENTS: Dict[Tuple[str, str], Agent] = {}
+# 세션별 HybridMemoryAgent 캐시
+_AGENTS: Dict[Tuple[str, str], HybridMemoryAgent] = {}
 
 
-def build_agent(user_id: str, session_id: str, system_prompt: str) -> Agent:
-    """LettA Agent 생성 (0.11.7 호환 버전)"""
-    llm_config = LLMConfig(model="gpt-4o-mini", context_window=8192)
-    agent_state = AgentState(system_prompt=system_prompt, llm_config=llm_config)
-    user = User(id=user_id)
-
-    
-    agent = Agent(agent_state=agent_state, user=user)
-    agent.persona = "curious_mentor"
-    return agent
-
-
-def get_agent(user_id: str, session_id: str, system_prompt: str) -> Agent:
-    """세션별 LettA Agent 재사용"""
+def get_agent(user_id: str, session_id: str, system_prompt: str) -> HybridMemoryAgent:
+    """
+    유저/세션 조합별로 메모리 에이전트를 하나씩 유지
+    - system_prompt는 현재 구조에선 직접 쓰진 않지만, 필요하면 히스토리에 첫 메시지로 넣거나 확장 가능
+    """
     key = (user_id, session_id)
     if key not in _AGENTS:
-        _AGENTS[key] = build_agent(user_id, session_id, system_prompt)
+        _AGENTS[key] = HybridMemoryAgent(name=f"{user_id}_{session_id}")
+        print(f"[HybridMemory] session created: {user_id}_{session_id}")
     return _AGENTS[key]
 
 
-def safe_chat(agent: Agent, message: str) -> dict:
-    """LettA Agent 대화 안전 실행"""
+def safe_chat(agent: HybridMemoryAgent, message: str) -> dict:
+    """
+    HybridMemoryAgent의 chat을 감싸는 안전 래퍼
+    - 예외 발생 시 fallback 메시지로 대체
+    """
     try:
         reply = agent.chat(message)
-        if isinstance(reply, dict) and "text" in reply:
-            reply = reply["text"]
-
-        return {"answer": str(reply).strip(), "fallback": False}
-
+        return {"answer": reply, "fallback": False}
     except Exception as e:
-        return {"answer": f"(임시 응답) LettA 처리 중 오류 발생: {e}", "fallback": True}
+        print(f"[HybridMemory Error] {e}")
+        return {
+            "answer": "죄송해요, 지금은 대화를 제대로 처리하지 못했어요. 다시 한 번 말씀해 주실 수 있을까요?",
+            "fallback": True,
+        }

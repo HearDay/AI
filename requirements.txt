@@ -29,7 +29,11 @@ faiss-cpu
 
 # AI 토론 모듈
 # MemGPT 관련
-memgpt
+letta
+sqlite-vec
+tiktoken
+
+
 
 # STT / TTS
 google-cloud-speech

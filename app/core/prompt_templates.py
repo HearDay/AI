@@ -55,7 +55,10 @@ def map_level_to_category(level: int) -> str:
 # ------------------------------------------------------------
 # 탐구형 질문 프롬프트 생성 함수
 # ------------------------------------------------------------
-def build_open_question_prompt(summary: str, level: int | str = "beginner") -> str:
+from typing import Union
+
+def build_open_question_prompt(summary: str, level: Union[int, str] = "beginner") -> str:
+
     """
     뉴스 요약문을 받아서 레벨별 탐구형 질문을 한 문장으로 생성하는 기본 프롬프트.
     숫자형(1~6) 또는 문자열("beginner"/"intermediate"/"advanced") 입력을 모두 지원.
@@ -68,7 +71,10 @@ def build_open_question_prompt(summary: str, level: int | str = "beginner") -> s
 
     guide = LEVEL_GUIDES.get(lvl, LEVEL_GUIDES["beginner"])
 
-    return f"""너는 사용자의 뉴스 이해를 돕는 대화형 토론 파트너다.
+    return f"""너는 사용자의 뉴스 이해를 돕는 대화형 토론 파트너이자 질문 설계자다.
+- 먼저 뉴스 내용을 바탕으로 자연스러운 짧은 피드백을 한 문장 생성하고,
+- 이어 탐구형 질문을 한 문장 덧붙여라.
+
 {CONVERSATIONAL_STYLE}
 {guide}
 

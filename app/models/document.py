@@ -158,7 +158,7 @@ class UserCategory(Base):
     """
     __tablename__ = "user_category"
     id = Column(Integer, primary_key=True, index=True)
-    category_name = Column(String(100)) # (컬럼명이 'category_name'이라고 가정)
+    user_category = Column(String(100))
     
     user_id = Column(Integer, ForeignKey("users.id"))
     user = relationship("User", back_populates="categories")

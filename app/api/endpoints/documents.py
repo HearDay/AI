@@ -247,7 +247,7 @@ async def get_user_recommendations_by_specific_category(
                 selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
             )
             .where(Article.id.in_(similar_article_ids))
-            .where(ArticleRecommendKeyword.keyword == user_category)
+            .where(ArticleRecommendKeyword.keyword == category_name)
             .where(ArticleRecommend.status == 'COMPLETED')
         )
         result = await db.execute(sbert_query)

@@ -68,18 +68,37 @@ def discussion_feedback(payload: DiscussionIn):
         level = payload.level
 
         # -------------------------------
+        # open_question 모드: 질문만 생성
+        # -------------------------------
+        if mode == "open_question":
+            try:
+                question = generate_question(content, mode="open_question", level=level)
+                is_safe, reason = content_filter(question)
+                if not is_safe:
+                    question = reason
+                return DiscussionOut(
+                    reply=question,
+                    fallback=False,
+                    user_id=user_id,
+                    session_id=session_id
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"OpenQuestion Error: {e}")
+
+        # -------------------------------
         # 시스템 프롬프트 정의 (대답 + 후속질문 생성 지시)
         # -------------------------------
-        system_prompt = f"""
-        너는 사용자의 한국인 뉴스토론 파트너이자 대화 상대다.
-        - 사용자의 발화를 이해하고 공감하는 짧은 피드백을 먼저 해라.
-        - 이어서 자연스럽게 후속 질문을 덧붙여라.
-        - 이전 대화 내용을 기억해 일관성 있게 대화해라.
-        - 지나치게 포멀하거나 로봇같이 말하지 말고, 사람처럼 자연스럽게 표현해라.
+        system_prompt = """
+        너는 한국어 뉴스 토론 파트너다.
+        - 사용자의 말을 1문장 이내로 요약하고 공감하라.
+        - 이어서 1문장으로 간결한 후속 질문을 하라.
+        - 전체 답변은 3문장 이하로 제한하라.
+        - 정책 설명, 항목 나열, '또한', '이러한' 같은 표현을 피하라.
+        - 사람처럼 대화하되 자연스럽게 마무리하라.
         """
 
         # -------------------------------
-        # letta 세션 기반 응답
+        # 세션 기반 응답 (followup)
         # -------------------------------
         agent = get_agent(user_id, session_id, system_prompt)
         chat_result = safe_chat(agent, message)

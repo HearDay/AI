@@ -24,7 +24,7 @@ recommend_router = APIRouter(
 
 STANDARD_CANDIDATES = [
     "경제",
-    "방송 / 연예",
+    "방송_연예",
     "IT",
     "쇼핑",
     "생활",
@@ -247,7 +247,7 @@ async def get_user_recommendations_by_specific_category(
                 selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
             )
             .where(Article.id.in_(similar_article_ids))
-            .where(ArticleRecommendKeyword.keyword == category_name)
+            .where(ArticleRecommendKeyword.keyword == user_category)
             .where(ArticleRecommend.status == 'COMPLETED')
         )
         result = await db.execute(sbert_query)
@@ -256,7 +256,7 @@ async def get_user_recommendations_by_specific_category(
         if not articles:
             raise HTTPException(
                 status_code=404,
-                detail=f"'{category_name}' 카테고리에 맞는 유사 기사가 없습니다."
+                detail=f"'{user_category}' 카테고리에 맞는 유사 기사가 없습니다."
             )
 
         # 기사 ID를 키로 하는 맵 생성
@@ -299,7 +299,7 @@ async def get_user_recommendations(
         # 2. (LLM 로직) 10개 이하: 선호 카테고리 기반 추천
         print(f"User {user_id}: LLM 기반 추천 (읽은 기사 {read_count}개)")
         
-        pref_query = select(UserCategory.category_name)\
+        pref_query = select(UserCategory.user_category)\
                      .where(UserCategory.user_id == user_id)
         user_categories = (await db.execute(pref_query)).scalars().all()
 

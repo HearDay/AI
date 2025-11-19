@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from app.services.voice_service import speech_to_text, text_to_speech
 from app.core.schemas import DiscussionIn
 from app.services.feedback import discussion_feedback
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/voice", tags=["voice_discussion_b64"])
 

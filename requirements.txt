@@ -28,11 +28,7 @@ torch
 faiss-cpu
 
 # AI 토론 모듈
-# LettA (MemGPT) + Upstage Solar API 
-letta
-sqlite-vec
-tiktoken
-letta>=0.11.7
+# Upstage Solar API 
 requests>=2.31.0
 
 # STT / TTS

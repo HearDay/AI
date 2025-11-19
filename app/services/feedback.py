@@ -25,9 +25,7 @@ def discussion_feedback(payload: DiscussionIn):
         mode = payload.mode
         level = payload.level
 
-        # -------------------------
-        # 종료 감지
-        # -------------------------
+        # 종료 문구 감지
         if any(w in message.lower() for w in END_WORDS):
             return DiscussionOut(
                 reply="좋은 의견 나눠주셔서 감사합니다. 여기서 토론은 마무리할게요.",
@@ -36,9 +34,7 @@ def discussion_feedback(payload: DiscussionIn):
                 session_id=session_id
             )
 
-        # -------------------------
         # open_question: 첫 질문
-        # -------------------------
         if mode == "open_question":
             question = generate_question(content, mode="open_question", level=level)
             is_safe, reason = content_filter(question)
@@ -52,22 +48,24 @@ def discussion_feedback(payload: DiscussionIn):
                 session_id=session_id,
             )
 
-        # -------------------------
-        # followup: 의견 + 질문
-        # -------------------------
+        # followup: 자연스러운 의견 + (필요할 경우) 질문
         agent = get_agent(user_id, session_id, "")
         chat_result = safe_chat(agent, message)
 
-        base_reply = chat_result["answer"].strip()   # 1문장 의견
+        base_reply = chat_result["answer"].strip()
 
-        # 항상 followup 질문 생성 (1~2문장 가능)
+        # followup 문장은 “질문일 수도 있고 아닐 수도 있음”
         context = f"{content}\n\n{message}" if content else message
         question = generate_question(context, mode="followup", level=level)
         is_safe, reason = content_filter(question)
         if not is_safe:
             question = reason
 
-        final_reply = base_reply + "\n\n" + question
+        # question이 실제 질문인지 판별
+        if question.endswith("?"):
+            final_reply = base_reply + "\n\n" + question
+        else:
+            final_reply = base_reply
 
         return DiscussionOut(
             reply=final_reply.strip(),

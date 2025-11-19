@@ -2,7 +2,8 @@ from app.services.llm_api import run_llm
 
 class HybridMemoryAgent:
     """
-    간단한 대화 메모리 + Upstage LLM 결합형 에이전트
+    간단한 대화 메모리 + Upstage LLM 결합형 에이전트 (개선 버전)
+    - followup 응답이 훨씬 자연스럽고 풍부하도록 system_prompt 확장
     """
 
     def __init__(self, name: str = "discussion_agent"):
@@ -17,6 +18,12 @@ class HybridMemoryAgent:
         return self.history[-limit:]
 
     def chat(self, user_input: str, role: str = "user") -> str:
+        """
+        followup 모드 기본 의견 생성 담당
+        - 질문 금지
+        - 자연스러운 1~2문장 의견/관찰/부연 설명 허용
+        - 과도한 딱딱함 제거
+        """
         self.add_message(role, user_input)
 
         context = self.get_recent_messages(limit=5)
@@ -27,14 +34,16 @@ class HybridMemoryAgent:
                 {
                     "role": "system",
                     "content": (
-                        "너는 사용자의 의견을 바탕으로 짧고 자연스러운 의견을 말하는 토론 파트너다. "
-                        "한 문장으로 간결한 의견 또는 관찰만 표현하라. "
-                        "질문은 생성하지 마라."
+                        "너는 사용자의 발화를 듣고 자연스럽고 부드러운 방식으로 의견을 말하는 토론 파트너다. "
+                        "1~2문장으로 대화하듯 자연스럽게 반응해라. "
+                        "공감, 간단한 설명, 관찰, 의견 표현 모두 가능하다. "
+                        "지나치게 딱딱한 분석은 피하고, 사람처럼 자연스럽게 말해라. "
+                        "단, 질문은 생성하지 마라."
                     ),
                 },
                 {"role": "user", "content": conversation},
             ],
-            max_tokens=80,
+            max_tokens=150,
             temperature=0.7,
         )
 

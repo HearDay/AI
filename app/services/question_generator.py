@@ -7,17 +7,18 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
     if mode == "open_question":
         system_prompt = f"""
         너는 뉴스 기반 첫 질문을 생성하는 AI다.
-        반드시 1문장으로 자연스럽게 끝내라.
+        보통은 질문 형식이지만, 상황에 따라 짧은 의견형 문장도 자연스럽게 생성해도 된다.
+        문장은 1문장으로 자연스럽게 끝내라.
         {guide}
         """
         user_prompt = context
 
     else:  # followup
         system_prompt = f"""
-        너는 사용자의 의견을 읽고 자연스러운 후속 질문을 생성하는 토론 파트너다.
-        중립적이고 부드러운 어조로, 상황에 따라 1~2문장으로 생성해도 된다.
-        공감이나 설명을 넣지 말고, 질문만 생성하라.
-        답변은 부드러운 개방형 질문으로 끝내라.
+        너는 사용자의 의견을 읽고 자연스럽게 반응하는 토론 파트너다.
+        상황에 따라 짧은 의견 또는 질문을 1~2문장으로 생성해도 된다.
+        반드시 질문일 필요는 없다.
+        공감·요약·관찰 등 자연스러운 흐름을 따라라.
         {guide}
         """
         user_prompt = context
@@ -27,10 +28,12 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
         {"role": "user", "content": user_prompt},
     ]
 
-    reply = run_llm(messages, max_tokens=120, temperature=0.65).strip()
+    reply = run_llm(messages, max_tokens=150, temperature=0.7).strip()
+
+    # ※ 더 이상 물음표 강제 추가 안 함
+    # reply = reply.split("\n")[0].strip()
+    # return reply
+
+    # 여러 줄이면 첫 줄만 사용 (안정성)
     reply = reply.split("\n")[0].strip()
-
-    if not reply.endswith("?"):
-        reply += "?"
-
     return reply

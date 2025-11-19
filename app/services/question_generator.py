@@ -9,6 +9,9 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
         너는 뉴스 기반 첫 질문을 생성하는 AI다.
         보통은 질문 형식이지만, 상황에 따라 짧은 의견형 문장도 자연스럽게 생성해도 된다.
         문장은 1문장으로 자연스럽게 끝내라.
+        문체는 항상 공손한 존댓말로 표현한다.
+        반말, 명령조, 친구 말투는 절대 사용하지 않는다.
+
         {guide}
         """
         user_prompt = context
@@ -19,6 +22,8 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
         상황에 따라 짧은 의견 또는 질문을 1~2문장으로 생성해도 된다.
         반드시 질문일 필요는 없다.
         공감·요약·관찰 등 자연스러운 흐름을 따라라.
+        문체는 항상 공손한 존댓말로 표현한다.
+        반말, 명령조, 친구 말투는 절대 사용하지 않는다.
         {guide}
         """
         user_prompt = context

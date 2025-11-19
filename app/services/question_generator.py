@@ -11,6 +11,7 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
         문장은 1문장으로 자연스럽게 끝내라.
         문체는 항상 공손한 존댓말로 표현한다.
         반말, 명령조, 친구 말투는 절대 사용하지 않는다.
+        난이도에 따라 질문의 깊이와 관점이 달라지도록 표현한다.
 
         {guide}
         """
@@ -24,6 +25,7 @@ def generate_question(context: str, mode: str = "open_question", level: str = "b
         공감·요약·관찰 등 자연스러운 흐름을 따라라.
         문체는 항상 공손한 존댓말로 표현한다.
         반말, 명령조, 친구 말투는 절대 사용하지 않는다.
+        난이도에 따라 질문의 깊이와 관점이 달라지도록 표현한다.
         {guide}
         """
         user_prompt = context

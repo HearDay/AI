@@ -40,20 +40,9 @@ app.include_router(recommend_router)
 app.include_router(feedback.router)
 
 
+
 # ======================================================
-# AI 토론 관련 엔드포인트
+# 음성 토론 관련 엔드포인트
 # ======================================================
-@app.post("/prompt/question")
-def prompt_question(
-    mode: str = Form("open_question"),
-    level: str = Form("beginner"),
-    context: str = Form(...)
-):
-    """
-    LLM 기반 뉴스 토론 질문 생성 (Upstage Solar API 버전)
-    - mode: open_question / followup
-    - level: beginner / intermediate / advanced
-    - context: 뉴스 요약 또는 사용자 발언
-    """
-    question = generate_question(context, mode=mode, level=level)
-    return {"mode": mode, "level": level, "question": question}
+from app.api.endpoints.voice_discussion import router as voice_discussion_router
+app.include_router(voice_discussion_router)

@@ -1,30 +1,38 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+import base64
+from fastapi import APIRouter, HTTPException
 from app.services.voice_service import speech_to_text, text_to_speech
 from app.core.schemas import DiscussionIn
 from app.services.feedback import discussion_feedback
 
-router = APIRouter(prefix="/voice", tags=["voice_discussion"])
+router = APIRouter(prefix="/voice", tags=["voice_discussion_b64"])
 
-@router.post("/discussion")
-async def voice_discussion(
-    user_id: str = Form("voice_user"),
-    session_id: str = Form("voice_session"),
-    content: str = Form(...),
-    mode: str = Form("followup"),
-    level: str = Form("beginner"),
-    audio: UploadFile = File(...)
-):
+class VoiceDiscussionIn(BaseModel):
+    user_id: str = "voice_user"
+    session_id: str = "voice_session"
+    content: str                     # 뉴스 요약 or 기사
+    audio_b64: str                  # Base64 음성 입력
+    mode: str = "followup"
+    level: str = "beginner"
+
+
+@router.post("/discussion-b64")
+async def voice_discussion_b64(payload: VoiceDiscussionIn):
     """
-    (1) 음성 받아서 STT
-    (2) AI 토론 수행
-    (3) TTS로 변환한 Base64 반환
+    (1) Base64 음성 입력 받기
+    (2) STT
+    (3) AI 토론 수행
+    (4) AI 답변을 TTS로 변환
+    (5) Base64 MP3로 반환
     """
 
     try:
         # ---------------------------
-        # 1) 음성 파일 → bytes 로 읽기
+        # 1) Base64 → Audio Bytes
         # ---------------------------
-        audio_bytes = await audio.read()
+        try:
+            audio_bytes = base64.b64decode(payload.audio_b64)
+        except Exception:
+            raise HTTPException(400, "audio_b64 디코딩 실패")
 
         # ---------------------------
         # 2) STT (음성 → 텍스트)
@@ -32,24 +40,24 @@ async def voice_discussion(
         stt_text = speech_to_text(audio_bytes)
 
         # ---------------------------
-        # 3) AI 토론 (텍스트 기반)
+        # 3) 텍스트 기반 토론 수행
         # ---------------------------
-        payload = DiscussionIn(
-            user_id=user_id,
-            session_id=session_id,
-            content=content,
+        discussion_input = DiscussionIn(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            content=payload.content,
             message=stt_text,
-            mode=mode,
-            level=level
+            mode=payload.mode,
+            level=payload.level
         )
 
-        discussion_result = discussion_feedback(payload)
-        ai_reply = discussion_result.reply
+        result = discussion_feedback(discussion_input)
+        ai_reply = result.reply
 
         # ---------------------------
-        # 4) TTS 변환 (AI 답변 → Base64 음성)
+        # 4) TTS (AI답변 → 음성)
         # ---------------------------
-        audio_b64 = text_to_speech(ai_reply, return_b64=True)
+        audio_b64_response = text_to_speech(ai_reply, return_b64=True)
 
         # ---------------------------
         # 5) 결과 반환
@@ -57,8 +65,8 @@ async def voice_discussion(
         return {
             "user_input_text": stt_text,
             "ai_reply_text": ai_reply,
-            "audio_b64": audio_b64,
-            "fallback": discussion_result.fallback
+            "audio_b64": audio_b64_response,
+            "fallback": result.fallback
         }
 
     except Exception as e:

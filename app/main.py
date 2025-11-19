@@ -44,5 +44,5 @@ app.include_router(feedback.router)
 # ======================================================
 # 음성 토론 관련 엔드포인트
 # ======================================================
-from app.api.endpoints.voice_discussion import router as voice_discussion_router
-app.include_router(voice_discussion_router)
+from app.api.endpoints.voice_discussion import router as voice_discussion_b64_router
+app.include_router(voice_discussion_b64_router)

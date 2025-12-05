@@ -1,46 +1,51 @@
+import re
 from app.services.llm_api import run_llm
 from app.core.prompt_templates import LEVEL_GUIDES
 
-def generate_question(context: str, mode: str = "open_question", level: str = "beginner") -> str:
+def _one(text, max_s=2):
+    text = text.replace("\n", " ").strip()
+    sents = re.split(r'(?<=[.!?])\s+', text)
+    return " ".join(s.strip() for s in sents[:max_s] if s.strip())
+
+
+def generate_question(context, mode="followup", level="beginner"):
     guide = LEVEL_GUIDES.get(level, LEVEL_GUIDES["beginner"])
 
+    # 요약 요청
+    if any(k in context for k in ["요약", "정리", "간단히 설명"]):
+        sp = (
+            "다음 내용을 2~3문장으로 공손하게 요약해라. "
+            "예시는 필요하다고 판단되는 경우에만 생성할 수 있다."
+        )
+        res = run_llm(
+            [
+                {"role": "system", "content": sp},
+                {"role": "user", "content": context}
+            ],
+            max_tokens=120, temperature=0.4
+        )
+        return _one(res, 3)
+
+    # open question
     if mode == "open_question":
-        system_prompt = f"""
-        너는 뉴스 기반 첫 질문을 생성하는 AI다.
-        보통은 질문 형식이지만, 상황에 따라 짧은 의견형 문장도 자연스럽게 생성해도 된다.
-        문장은 1문장으로 자연스럽게 끝내라.
-        문체는 항상 공손한 존댓말로 표현한다.
-        반말, 명령조, 친구 말투는 절대 사용하지 않는다.
-        난이도에 따라 질문의 깊이와 관점이 달라지도록 표현한다.
+        sp = (
+            "뉴스 요약을 읽고 자연스러운 첫 질문을 1~2문장으로 생성해라. "
+            "예시는 필요하다고 판단될 때만 포함해라.\n"
+            f"{guide}"
+        )
+    else:
+        sp = (
+            "사용자의 의견을 읽고 follow-up 질문 또는 반응을 1~2문장으로 생성해라. "
+            "질문은 0~1개 포함할 수 있으며 예시는 필요할 때만 포함한다.\n"
+            f"{guide}"
+        )
 
-        {guide}
-        """
-        user_prompt = context
+    raw = run_llm(
+        [
+            {"role": "system", "content": sp},
+            {"role": "user", "content": context}
+        ],
+        max_tokens=120, temperature=0.5
+    )
 
-    else:  # followup
-        system_prompt = f"""
-        너는 사용자의 의견을 읽고 자연스럽게 반응하는 토론 파트너다.
-        상황에 따라 짧은 의견 또는 질문을 1~2문장으로 생성해도 된다.
-        반드시 질문일 필요는 없다.
-        공감·요약·관찰 등 자연스러운 흐름을 따라라.
-        문체는 항상 공손한 존댓말로 표현한다.
-        반말, 명령조, 친구 말투는 절대 사용하지 않는다.
-        난이도에 따라 질문의 깊이와 관점이 달라지도록 표현한다.
-        {guide}
-        """
-        user_prompt = context
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    reply = run_llm(messages, max_tokens=150, temperature=0.7).strip()
-
-    # ※ 더 이상 물음표 강제 추가 안 함
-    # reply = reply.split("\n")[0].strip()
-    # return reply
-
-    # 여러 줄이면 첫 줄만 사용 (안정성)
-    reply = reply.split("\n")[0].strip()
-    return reply
+    return _one(raw, 2)

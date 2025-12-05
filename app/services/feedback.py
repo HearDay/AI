@@ -20,59 +20,51 @@ SHORT_INPUTS = [
 
 
 # ---------------------------------------------------------
-# 기사와 사용자 발화의 관련성 판정 
+# 기사-사용자 메시지 관련성 판단
 # ---------------------------------------------------------
 def is_relevant_to_content(content: str, message: str) -> bool:
-    """
-    YES 경향 — 주제가 조금이라도 이어지면 YES
-    완전히 다른 경우만 NO
-    """
     prompt = (
-        "다음 두 문장이 같은 이야기 흐름(context) 또는 주제 영역(topic)에 속하는지 판단해라.\n"
-        "주제가 완전히 다르다고 확실하게 판단되는 경우에만 NO라고 답해라.\n"
-        "내용 흐름이 이어질 가능성이 조금이라도 있으면 YES라고 답해라.\n\n"
+        "다음 두 문장이 같은 이야기 흐름(context) 또는 주제 영역(topic)에 속하는지 판단하세요. "
+        "주제가 완전히 다르다고 확실히 판단되는 경우에만 NO라고 답하고, "
+        "내용 흐름이 이어질 가능성이 조금이라도 있으면 YES라고 답하세요.\n\n"
         f"문장1: {content}\n"
         f"문장2: {message}\n\n"
         "정답은 YES 또는 NO만."
     )
 
-    res = run_llm([{"role": "user", "content": prompt}], max_tokens=6, temperature=0.2)
+    res = run_llm(
+        [{"role": "user", "content": prompt}],
+        max_tokens=6,
+        temperature=0.2
+    )
     return res.strip().upper().startswith("Y")
 
 
 # ---------------------------------------------------------
-# follow-up 질문 필요 여부 판단 (LLM 판단)
+# 반말/서술체 어미 → 존댓말로 변환
 # ---------------------------------------------------------
-def should_followup(message: str, base_reply: str) -> bool:
-    """
-    대화 맥락 상 follow-up 질문이 자연스러운지 yes/no로 판단.
-    """
-    prompt = (
-        "다음은 사용자 발화와 AI 답변이다.\n"
-        "대화를 자연스럽게 이어가기 위해 follow-up 질문을 추가하는 것이 적절한지 판단해라.\n\n"
-        "기준:\n"
-        "- 사용자가 자신의 생각이나 감정을 더 말할 여지가 있으면 yes\n"
-        "- 사용자 질문이 이미 충분히 해결되었거나, 마무리 느낌이면 no\n"
-        "- yes 또는 no만 답해라.\n\n"
-        f"[사용자]\n{message}\n\n"
-        f"[AI]\n{base_reply}\n\n"
-        "답변:"
-    )
-
-    reply = run_llm(
-        [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": message}
-        ],
-        max_tokens=3,
-        temperature=0.0,
-    ).strip().lower()
-
-    return "yes" in reply
+def fix_tone(sentence: str) -> str:
+    replacements = {
+        "한다.": "합니다.",
+        "한다": "합니다",
+        "된다.": "됩니다.",
+        "된다": "됩니다",
+        "있다.": "있습니다.",
+        "있다": "있습니다",
+        "이다.": "입니다.",
+        "이다": "입니다",
+        "늘린다": "늘립니다",
+        "시행하고 있다": "시행하고 있습니다",
+        "추진하고 있다": "추진하고 있습니다"
+    }
+    for k, v in replacements.items():
+        if sentence.endswith(k):
+            return sentence[: -len(k)] + v
+    return sentence
 
 
 # ---------------------------------------------------------
-# 중복 제거 + 2~3문장 제한 후처리
+# 중복 제거 + 정중 어투 + 2~3문장 제한
 # ---------------------------------------------------------
 def postprocess_reply(text: str) -> str:
     if not text:
@@ -87,18 +79,17 @@ def postprocess_reply(text: str) -> str:
     seen_subjects = set()
 
     for s in sentences:
-        # 동일 주어(…은/는) 중복 정의 제거
+        # (1) 같은 주어 반복 제거
         m = re.match(r"^([가-힣a-zA-Z0-9 \"']+?)(은|는)\s", s)
         if m:
-            subject = m.group(1).strip()
-            if subject in seen_subjects:
+            subj = m.group(1).strip()
+            if subj in seen_subjects:
                 continue
-            seen_subjects.add(subject)
+            seen_subjects.add(subj)
 
-        # 의미 중복 제거 (명사 기반)
+        # (2) 의미 기반 중복 제거
         norm = re.sub(r"[^가-힣a-zA-Z ]", " ", s.lower())
-        norm = re.sub(r"\s+", " ", norm).strip()
-
+        norm = re.sub(r"\s+", " ", norm)
         if not norm:
             continue
 
@@ -106,6 +97,7 @@ def postprocess_reply(text: str) -> str:
         for t in norm.split():
             if len(t) <= 1:
                 continue
+            # 동사 어미 날려서 비교
             if t.endswith(("다", "요", "니다", "하고", "하며", "되고", "있고")):
                 base = t[:-1]
                 if len(base) > 1:
@@ -113,34 +105,57 @@ def postprocess_reply(text: str) -> str:
             else:
                 tokens.append(t)
 
-        if not tokens:
+        noun_set = set(tokens)
+        if not noun_set:
             continue
 
-        noun_set = set(tokens)
-
-        # 중복 의미 판정
         dup = False
         for prev in meaning_sets:
             if len(noun_set & prev) >= 2:
                 dup = True
                 break
+
         if dup:
             continue
 
         meaning_sets.append(noun_set)
-        cleaned.append(s)
+        cleaned.append(fix_tone(s))
 
         if len(cleaned) >= 3:
             break
 
     if not cleaned and sentences:
-        cleaned = [sentences[0]]
+        cleaned = [fix_tone(sentences[0])]
 
     return " ".join(cleaned[:3]).strip()
 
 
 # ---------------------------------------------------------
-# Discussion API (최종본)
+# follow-up 질문 필요 여부 판단 (LLM 기준)
+# ---------------------------------------------------------
+def should_followup(message: str, base_reply: str) -> bool:
+    prompt = (
+        "다음은 사용자 발화와 AI 답변이다.\n"
+        "대화를 자연스럽게 이어가기 위해 follow-up 질문을 추가하는 것이 적절한지 판단해라.\n"
+        "- 사용자가 자신의 생각/감정/해석을 말한다면 yes\n"
+        "- 단순 요청/사실 질문/확인성 발화라면 no\n"
+        "- YES 또는 NO만 답해라.\n\n"
+        f"[사용자 발화]\n{message}\n\n"
+        f"[AI 답변]\n{base_reply}\n\n"
+        "답변:"
+    )
+
+    res = run_llm(
+        [{"role": "user", "content": prompt}],
+        max_tokens=3,
+        temperature=0.0
+    ).lower()
+
+    return "yes" in res
+
+
+# ---------------------------------------------------------
+# Discussion API
 # ---------------------------------------------------------
 @router.post("/discussion", response_model=DiscussionOut)
 def discussion_feedback(payload: DiscussionIn):
@@ -152,52 +167,54 @@ def discussion_feedback(payload: DiscussionIn):
         mode = payload.mode
         level = payload.level
 
-        # 종료 감지
+        # 종료 문구
         if any(w in message.lower() for w in END_WORDS):
-            reply = "좋은 의견 나눠주셔서 감사합니다. 여기서 토론은 마무리할게요."
-            return DiscussionOut(reply=reply, fallback=False, user_id=user_id, session_id=session_id)
-
-        # 첫 질문
-        if mode == "open_question":
-            question = generate_question(content, mode="open_question", level=level)
-            question = postprocess_reply(question)
-            return DiscussionOut(reply=question, fallback=False, user_id=user_id, session_id=session_id)
-
-        # 짧은 입력 대응
-        if message in SHORT_INPUTS or len(message) <= 4:
-            reply = (
-                "조금 고민 중이신 것 같네요. 기사 내용과 관련해 어떤 점이 마음에 남으셨는지 "
-                "조금만 더 말씀해 주시면 대화를 이어서 도와드릴 수 있을 것 같습니다."
-            )
-            return DiscussionOut(reply=reply, fallback=False, user_id=user_id, session_id=session_id)
-
-        # follow-up
-        agent = get_agent(user_id, session_id, "")
-        chat_result = safe_chat(agent, message)
-        base_reply = postprocess_reply(chat_result["answer"].strip())
-
-        # -------------------------------
-        # 기사 관련성 판단 
-        # -------------------------------
-        if not is_relevant_to_content(content, message):
             return DiscussionOut(
-                reply="말씀해 주신 내용은 지금 이야기 중인 기사와는 조금 거리가 있어 보여요. 기사와 관련된 생각이나 궁금한 점이 있다면 다시 말씀해 주세요.",
+                reply="좋은 의견 나눠주셔서 감사합니다. 여기서 토론은 마무리할게요.",
                 fallback=False,
                 user_id=user_id,
                 session_id=session_id,
             )
 
-        # follow-up 필요 여부 판단
+        # 첫 질문
+        if mode == "open_question":
+            q = generate_question(content, mode="open_question", level=level)
+            q = postprocess_reply(q)
+            return DiscussionOut(reply=q, fallback=False, user_id=user_id, session_id=session_id)
+
+        # 짧은 입력
+        if message in SHORT_INPUTS or len(message) <= 4:
+            reply = (
+                "조금 더 생각해 보시는 중이신 것 같아요. 기사와 관련해 어떤 점이 가장 마음에 남으셨는지 "
+                "조금만 더 말씀해 주시면 이어서 도와드릴 수 있을 것 같습니다."
+            )
+            return DiscussionOut(reply=reply, fallback=False, user_id=user_id, session_id=session_id)
+
+        # follow-up 기본 답변
+        agent = get_agent(user_id, session_id, "")
+        chat_res = safe_chat(agent, message)
+        base_reply = postprocess_reply(chat_res["answer"].strip())
+
+        # 기사와 무관한 입력 차단
+        if not is_relevant_to_content(content, message):
+            return DiscussionOut(
+                reply="말씀해 주신 내용은 기사 흐름과는 조금 다른 주제인 것 같습니다. 기사 내용이나 그에 대한 생각을 중심으로 이어가 볼까요?",
+                fallback=False,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+        # follow-up 질문 필요 여부
         if should_followup(message, base_reply):
-            follow_q = generate_question(f"{content}\n{message}", mode="followup", level=level)
-            follow_q = postprocess_reply(follow_q)
-            final_reply = f"{base_reply} {follow_q}".strip()
+            q = generate_question(f"{content}\n{message}", mode="followup", level=level)
+            q = postprocess_reply(q)
+            final = f"{base_reply} {q}".strip()
         else:
-            final_reply = base_reply
+            final = base_reply
 
         return DiscussionOut(
-            reply=final_reply,
-            fallback=chat_result.get("fallback", False),
+            reply=final,
+            fallback=chat_res.get("fallback", False),
             user_id=user_id,
             session_id=session_id,
         )

@@ -30,12 +30,14 @@ def generate_question(context, mode="followup", level="beginner"):
     if mode == "open_question":
         sp = (
             "뉴스 요약을 읽고 자연스러운 첫 질문을 1~2문장으로 생성해라. "
+            "반드시 존댓말만 사용한다."
             "예시는 필요하다고 판단될 때만 포함해라.\n"
             f"{guide}"
         )
     else:
         sp = (
             "사용자의 의견을 읽고 follow-up 질문 또는 반응을 1~2문장으로 생성해라. "
+            "반드시 존댓말만 사용한다."
             "질문은 0~1개 포함할 수 있으며 예시는 필요할 때만 포함한다.\n"
             f"{guide}"
         )

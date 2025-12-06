@@ -18,6 +18,35 @@ SHORT_INPUTS = [
     "글쎄", "글쎄요", "잘 모르겠어", "모르겠네"
 ]
 
+# ---------------------------------------------------------
+# 요청/명령 감지 기능
+# ---------------------------------------------------------
+REQUEST_KEYWORDS = [
+    "요약", "설명", "정리", "알려줘", "알려 주세요",
+    "추천", "분석", "해줘", "해주세요",
+    "요약해", "설명해", "정리해","설명해줘", "정리해줘"
+]
+
+def is_direct_request(message: str) -> bool:
+    msg = message.lower()
+    return any(k in msg for k in REQUEST_KEYWORDS)
+
+
+# ---------------------------------------------------------
+# 질문 감지 기능
+# ---------------------------------------------------------
+QUESTION_KEYWORDS = [
+    "뭐야", "뭔데", "뭘까", "왜", "어째서", "어떻게",
+    "누구야", "언제야", "어디야",
+    "무슨 뜻", "무슨 의미", "어떤 거야", "어떤 건데", "?"
+]
+
+def is_question(message: str) -> bool:
+    msg = message.lower()
+    if msg.endswith("?"):
+        return True
+    return any(k in msg for k in QUESTION_KEYWORDS)
+
 
 # ---------------------------------------------------------
 # 기사-사용자 메시지 관련성 판단
@@ -41,7 +70,7 @@ def is_relevant_to_content(content: str, message: str) -> bool:
 
 
 # ---------------------------------------------------------
-# 반말/서술체 어미 → 존댓말로 변환
+# 반말/서술체 → 존댓말 변환
 # ---------------------------------------------------------
 def fix_tone(sentence: str) -> str:
     replacements = {
@@ -64,7 +93,7 @@ def fix_tone(sentence: str) -> str:
 
 
 # ---------------------------------------------------------
-# 중복 제거 + 정중 어투 + 2~3문장 제한
+# 중복 제거 + 2~3문장 제한
 # ---------------------------------------------------------
 def postprocess_reply(text: str) -> str:
     if not text:
@@ -79,7 +108,6 @@ def postprocess_reply(text: str) -> str:
     seen_subjects = set()
 
     for s in sentences:
-        # (1) 같은 주어 반복 제거
         m = re.match(r"^([가-힣a-zA-Z0-9 \"']+?)(은|는)\s", s)
         if m:
             subj = m.group(1).strip()
@@ -87,7 +115,6 @@ def postprocess_reply(text: str) -> str:
                 continue
             seen_subjects.add(subj)
 
-        # (2) 의미 기반 중복 제거
         norm = re.sub(r"[^가-힣a-zA-Z ]", " ", s.lower())
         norm = re.sub(r"\s+", " ", norm)
         if not norm:
@@ -95,14 +122,7 @@ def postprocess_reply(text: str) -> str:
 
         tokens = []
         for t in norm.split():
-            if len(t) <= 1:
-                continue
-            # 동사 어미 날려서 비교
-            if t.endswith(("다", "요", "니다", "하고", "하며", "되고", "있고")):
-                base = t[:-1]
-                if len(base) > 1:
-                    tokens.append(base)
-            else:
+            if len(t) > 1:
                 tokens.append(t)
 
         noun_set = set(tokens)
@@ -131,7 +151,7 @@ def postprocess_reply(text: str) -> str:
 
 
 # ---------------------------------------------------------
-# follow-up 질문 필요 여부 판단 (LLM 기준)
+# follow-up 질문 LLM 판단
 # ---------------------------------------------------------
 def should_followup(message: str, base_reply: str) -> bool:
     prompt = (
@@ -164,38 +184,31 @@ def discussion_feedback(payload: DiscussionIn):
         session_id = payload.session_id
         content = payload.content
         message = payload.message.strip()
-        mode = payload.mode
         level = payload.level
 
-        # 종료 문구
+        # 종료
         if any(w in message.lower() for w in END_WORDS):
             return DiscussionOut(
                 reply="좋은 의견 나눠주셔서 감사합니다. 여기서 토론은 마무리할게요.",
-                fallback=False,
-                user_id=user_id,
-                session_id=session_id,
+                fallback=False, user_id=user_id, session_id=session_id
             )
-
-        # 첫 질문
-        if mode == "open_question":
-            q = generate_question(content, mode="open_question", level=level)
-            q = postprocess_reply(q)
-            return DiscussionOut(reply=q, fallback=False, user_id=user_id, session_id=session_id)
 
         # 짧은 입력
         if message in SHORT_INPUTS or len(message) <= 4:
-            reply = (
-                "조금 더 생각해 보시는 중이신 것 같아요. 기사와 관련해 어떤 점이 가장 마음에 남으셨는지 "
-                "조금만 더 말씀해 주시면 이어서 도와드릴 수 있을 것 같습니다."
+            return DiscussionOut(
+                reply=(
+                    "조금 더 생각해 보시는 중이신 것 같아요. 기사와 관련해 어떤 점이 가장 마음에 남으셨는지 "
+                    "조금만 더 말씀해 주시면 이어서 도와드릴 수 있을 것 같습니다."
+                ),
+                fallback=False, user_id=user_id, session_id=session_id
             )
-            return DiscussionOut(reply=reply, fallback=False, user_id=user_id, session_id=session_id)
 
-        # follow-up 기본 답변
+        # 답변 생성
         agent = get_agent(user_id, session_id, "")
         chat_res = safe_chat(agent, message)
         base_reply = postprocess_reply(chat_res["answer"].strip())
 
-        # 기사와 무관한 입력 차단
+        
         if not is_relevant_to_content(content, message):
             return DiscussionOut(
                 reply="말씀해 주신 내용은 기사 흐름과는 조금 다른 주제인 것 같습니다. 기사 내용이나 그에 대한 생각을 중심으로 이어가 볼까요?",
@@ -204,19 +217,24 @@ def discussion_feedback(payload: DiscussionIn):
                 session_id=session_id,
             )
 
-        # follow-up 질문 필요 여부
-        if should_followup(message, base_reply):
-            q = generate_question(f"{content}\n{message}", mode="followup", level=level)
-            q = postprocess_reply(q)
-            final = f"{base_reply} {q}".strip()
-        else:
+        # 요청/질문이면 follow-up 절대 금지
+        if is_direct_request(message) or is_question(message):
             final = base_reply
+
+        else:
+            # 의견일 때만 follow-up
+            if should_followup(message, base_reply):
+                q = generate_question(f"{content}\n{message}", mode="followup", level=level)
+                q = postprocess_reply(q)
+                final = f"{base_reply} {q}".strip()
+            else:
+                final = base_reply
 
         return DiscussionOut(
             reply=final,
             fallback=chat_res.get("fallback", False),
             user_id=user_id,
-            session_id=session_id,
+            session_id=session_id
         )
 
     except Exception as e:

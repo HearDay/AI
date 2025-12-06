@@ -8,15 +8,15 @@ from typing import List, Optional, Literal, Dict
 class PromptQuestionIn(BaseModel):
     """뉴스 요약문 기반 탐구형 질문 생성 입력"""
     content: str                     # 뉴스 내용 또는 요약문
-    mode: Literal["open_question", "followup"] = "open_question"  # 질문 타입
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"  # 난이도
+    mode: Literal["followup"] = "followup"
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
 
 
 class PromptQuestionOut(BaseModel):
     """LLM이 생성한 질문 출력"""
-    question: str  # 모델이 생성한 질문
-    mode: str      # open_question / followup
-    level: str     # beginner / intermediate / advanced
+    question: str
+    mode: Literal["followup"] = "followup"
+    level: Literal["beginner", "intermediate", "advanced"]
 
 
 # ==============================================
@@ -28,13 +28,14 @@ class DiscussionIn(BaseModel):
     session_id: str = "default_session"  # 대화 세션 ID
     content: str                         # 뉴스 내용 또는 기사 일부
     message: str                         # 사용자의 발화 (응답/의견)
-    mode: Literal["open_question", "followup"] = "open_question"  # 대화 모드
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"  # 대화 난이도
+    
+    mode: Literal["followup"] = "followup"
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
 
 
 class DiscussionOut(BaseModel):
     """AI 토론 응답"""
-    reply: str                 # 모델이 만든 최종 답변 (피드백 + 후속질문 포함)
-    fallback: bool = False     # MemGPT 예외 시 임시 응답 여부
-    user_id: str = "demo_user" # 사용자 식별자
-    session_id: str = "default_session"  # 세션 ID
+    reply: str                 # 모델이 만든 최종 답변
+    fallback: bool = False     
+    user_id: str = "demo_user"
+    session_id: str = "default_session"

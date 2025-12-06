@@ -246,7 +246,7 @@ async def get_similar_articles(
     return articles
 
 @recommend_router.get(
-    "/category/", 
+    "/users/{user_id}/recommendations/category/{category_name}", 
     response_model=List[ArticleResponse],
     summary="[LLM] 여러 카테고리 기사 목록 (다중 입력)"
 )

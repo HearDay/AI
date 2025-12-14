@@ -2,7 +2,6 @@ import asyncio
 import faiss
 import numpy as np
 import json
-from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -10,41 +9,39 @@ from fastapi.concurrency import run_in_threadpool
 from app.models.document import Article, ArticleRecommend, ArticleRecommendVector, UserRecentArticle
 
 class AnalysisService:
+    """SBERT 기반 문서 유사도 분석 및 추천 서비스"""
+    
     def __init__(self):
         print("AnalysisService 초기화 중...")
         self.model = None
-        self.d = 768
+        self.d = 768  # 벡터 차원
         self.index = faiss.IndexFlatIP(self.d)
-        self.index_to_reco_id = {}
-        self.index_lock = asyncio.Lock() # API용 비동기 락
-        self.vector_id_to_article_id = {}
+        self.index_to_reco_id = {}  # Faiss 인덱스 ID -> ArticleRecommend ID 매핑
+        self.index_lock = asyncio.Lock()
 
     def _ensure_model_loaded_sync(self):
-        """[동기] 모델 로딩 (백그라운드 작업용)"""
+        """동기 모델 로딩 (백그라운드 작업용)"""
         if self.model is None:
             print("SBERT 모델을 로드합니다... (동기)")
             self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
             print("SBERT 모델 로드 완료.")
 
     async def _ensure_model_loaded(self):
-        """[비동기] 모델 로딩 (API용)"""
+        """비동기 모델 로딩 (API용)"""
         if self.model is None:
             await run_in_threadpool(self._ensure_model_loaded_sync)
 
-    # 👇 [수정됨] async def -> def (동기 함수)
     def encode_text(self, text: str) -> np.ndarray:
-        # await 없이 직접 동기 함수 호출
+        """텍스트를 SBERT 벡터로 인코딩"""
         self._ensure_model_loaded_sync()
-        # run_in_threadpool 제거하고 직접 호출
         embedding = self.model.encode(text)
         return np.asarray(embedding, dtype='float32')
 
-    # 👇 [수정됨] async def -> def (동기 함수)
     def add_document_to_index(self, reco_id: int, vector_list: list):
+        """Faiss 인덱스에 문서 벡터 추가"""
         self._ensure_model_loaded_sync()
         vector_np = np.array([vector_list], dtype='float32')
         
-        # Faiss 인덱스 추가 (동기 실행)
         faiss.normalize_L2(vector_np)
         start_idx = self.index.ntotal
         self.index.add(vector_np)
@@ -53,8 +50,6 @@ class AnalysisService:
             self.index_to_reco_id[start_idx + i] = reco_id
             
         print(f"ArticleRecommend ID {reco_id}가 인덱스 {start_idx}에 추가됨")
-
-    # --- 아래는 API용 비동기 함수들 (기존 유지) ---
 
     async def load_and_build_index(self, db: AsyncSession):
         print("DB로부터 Faiss 인덱스를 빌드합니다...")
@@ -106,7 +101,7 @@ class AnalysisService:
         print(f"총 {self.index.ntotal}개의 벡터가 Faiss 인덱스에 로드되었습니다.")
 
     async def find_similar_documents_by_user(self, db: AsyncSession, user_id: int, top_k: int = 5) -> list[int]:
-        # (사용자 취향 기반 추천 로직 - 기존 코드 유지)
+        """사용자가 읽은 기사 기반 유사 문서 추천"""
         await self._ensure_model_loaded()
         
         query = (
@@ -157,7 +152,7 @@ class AnalysisService:
         return res.scalars().all()
 
     async def find_similar_documents(self, db: AsyncSession, article_id: int, top_k: int = 5) -> list[int]:
-         # (기사 기반 추천 로직 - 기존 코드 유지)
+        """특정 기사와 유사한 문서 ID 리스트 반환"""
         query = select(ArticleRecommendVector.sbert_vector)\
                 .join(ArticleRecommend)\
                 .join(Article)\

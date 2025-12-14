@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload, Session, selectinload
@@ -6,27 +6,25 @@ from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.sql import text
-import asyncio
-import random
 
-# DB 및 모델 임포트
-from app.core.database import get_db, SessionLocal, SessionLocalSync
+from app.core.database import get_db, SessionLocalSync
 from app.models.document import (
     Article, ArticleRecommend, ArticleRecommendKeyword, ArticleRecommendVector,
-    User, UserCategory, UserRecentArticle
+    UserCategory, UserRecentArticle
 )
-# 서비스 임포트
 from app.services.keyword_extractor import keyword_extractor
 from app.services.analysis_service import analysis_service
 from app.services.bias_analyzer import bias_analyzer
-from app.services.clustering_service import clustering_service # [복구] 클러스터링 서비스 임포트
 
 router = APIRouter(tags=["AI Internal Processing"])
 recommend_router = APIRouter(tags=["AI Recommendation"])
 
+# 상수 정의
 STANDARD_CANDIDATES = [
     "경제", "방송_연예", "IT", "쇼핑", "생활", "해외", "스포츠", "정치"
 ]
+COLD_START_THRESHOLD = 10  # Cold Start 판단 기준 (읽은 기사 수)
+DEFAULT_RECOMMENDATION_LIMIT = 5  # 기본 추천 개수
 
 class ArticleResponse(BaseModel):
     id: int
@@ -37,36 +35,48 @@ class ArticleResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- 랜덤 뉴스 보완 헬퍼 함수 ---
+# --- 추천 헬퍼 함수들 ---
+
+async def get_user_read_count(db: AsyncSession, user_id: int) -> int:
+    """사용자가 읽은 기사 수 조회"""
+    count_query = select(func.count(UserRecentArticle.id)).where(
+        UserRecentArticle.user_id == user_id
+    )
+    return (await db.execute(count_query)).scalar_one_or_none() or 0
+
+
+def build_base_article_query():
+    """기본 기사 쿼리 빌더 (COMPLETED 상태, BIASED 제외)"""
+    return (
+        select(Article)
+        .join(Article.recommend)
+        .where(ArticleRecommend.status == 'COMPLETED')
+        .where(ArticleRecommend.bias_label != 'BIASED')
+    )
+
+
 async def fill_with_random_articles(
     db: AsyncSession,
     existing_articles: List[Article],
-    target_count: int = 5
+    target_count: int = DEFAULT_RECOMMENDATION_LIMIT
 ) -> List[Article]:
-    """
-    추천 뉴스가 target_count 미만일 때 랜덤 뉴스로 채워서 반환
-    """
+    """추천 뉴스가 target_count 미만일 때 랜덤 뉴스로 채워서 반환"""
     existing_ids = {article.id for article in existing_articles}
     needed_count = target_count - len(existing_articles)
     
     if needed_count <= 0:
         return existing_articles
     
-    # 랜덤 뉴스 조회 (기존 추천 제외, COMPLETED 상태, BIASED 아님)
     random_query = (
-        select(Article)
-        .join(Article.recommend)
-        .where(ArticleRecommend.status == 'COMPLETED')
-        .where(ArticleRecommend.bias_label != 'BIASED')
+        build_base_article_query()
         .where(~Article.id.in_(existing_ids) if existing_ids else True)
-        .order_by(text("RAND()"))  # MySQL의 RAND() 함수 사용
+        .order_by(text("RAND()"))
         .limit(needed_count)
     )
     
     result = await db.execute(random_query)
     random_articles = result.scalars().all()
     
-    # 기존 추천 + 랜덤 뉴스 합치기
     return list(existing_articles) + list(random_articles)
 
 # --- 백그라운드 작업 헬퍼 함수 (동기) ---
@@ -149,8 +159,7 @@ def process_ai_task_background(article_id: int):
         if bias_result['label'] == "BIASED":
             is_biased = True
         
-        # 3. [수정됨] 벡터 생성 (편향 여부와 상관없이 항상 수행!)
-        # 클러스터링을 하려면 편향된 기사도 벡터가 필요합니다.
+        # 3. 벡터 생성 (편향 여부와 상관없이 항상 수행 - 클러스터링을 위해 필요)
         sbert_vector_np = analysis_service.encode_text(article_text)
         sbert_vector_list = sbert_vector_np.tolist()
             
@@ -170,7 +179,7 @@ def process_ai_task_background(article_id: int):
         for kw in keywords_list:
             db_2.add(ArticleRecommendKeyword(article_recommend_id=reco_id, keyword=kw))
             
-        # 2. [수정됨] 벡터 저장 (편향 여부 상관없이 항상 저장)
+        # 2. 벡터 저장 (편향 여부 상관없이 항상 저장)
         db_2.query(ArticleRecommendVector)\
             .filter(ArticleRecommendVector.article_recommend_id == reco_id)\
             .delete()
@@ -191,27 +200,15 @@ def process_ai_task_background(article_id: int):
             db_2.commit()
             
             if is_biased:
-                # [편향 기사 처리]
-                # 1. 상태를 FILTERED로 변경
+                # 편향 기사 처리: FILTERED 상태로 변경
                 reco_to_update.status = 'FILTERED'
                 db_2.commit()
-                
-                # 2. 클러스터링 서비스 호출 (여기서 article_cluster_id가 생성됨)
-                print(f"[클러스터링] ID {article_id}: 편향 기사 그룹화 시작...")
-                clustering_service.assign_to_cluster(
-                    db_2, 
-                    reco_id, 
-                    sbert_vector_list, 
-                    article_title
-                )
-                print(f"[완료] ID {article_id}: FILTERED 저장 및 클러스터링 완료.")
-                
+                print(f"[완료] ID {article_id}: FILTERED 저장 완료.")
             else:
-                # [중립 기사 처리]
+                # 중립 기사 처리: COMPLETED 상태로 변경 및 Faiss 인덱싱
                 reco_to_update.status = 'COMPLETED'
                 db_2.commit()
                 
-                # Faiss 인덱싱 (일반 추천용)
                 analysis_service.add_document_to_index(reco_id, sbert_vector_list)
                 print(f"[완료] ID {article_id}: COMPLETED 및 인덱싱 완료.")
 
@@ -269,17 +266,16 @@ async def get_similar_articles(
     if not similar_article_ids:
         return []
     
-    # 필터 추가: 편향된(FILTERED, BIASED) 기사는 추천에서 제외
-    query = select(Article).join(Article.recommend)\
-            .where(Article.id.in_(similar_article_ids))\
-            .where(ArticleRecommend.bias_label != 'BIASED')
-
+    query = (
+        build_base_article_query()
+        .where(Article.id.in_(similar_article_ids))
+    )
     result = await db.execute(query)
     articles = result.scalars().all()
     
-    # 5개 미만이면 랜덤 뉴스로 채우기
-    articles = await fill_with_random_articles(db, list(articles), target_count=5)
-        
+    articles = await fill_with_random_articles(
+        db, list(articles), target_count=DEFAULT_RECOMMENDATION_LIMIT
+    )
     return articles
 
 @recommend_router.get(
@@ -290,48 +286,34 @@ async def get_similar_articles(
 async def get_documents_by_categories(
     user_id: int,
     category_name: str,
-    limit: int = 5,
+    limit: int = DEFAULT_RECOMMENDATION_LIMIT,
     db: AsyncSession = Depends(get_db)
 ):
-# 1. 사용자가 읽은 기사 수 확인
-    count_query = select(func.count(UserRecentArticle.id))\
-                    .where(UserRecentArticle.user_id == user_id)
-    read_count = (await db.execute(count_query)).scalar_one_or_none() or 0
+    read_count = await get_user_read_count(db, user_id)
 
-    if read_count <= 10:
-        # 2. (LLM 로직) 10개 이하: 선호 카테고리 기반 추천
-        print(f"User {user_id}: LLM 기반 '{category_name}' 카테고리 추천 (읽은 기사 {read_count}개)")
-
-        llm_query = (
-            select(Article)
-            .join(Article.recommend)
+    if read_count <= COLD_START_THRESHOLD:
+        # Cold Start: 카테고리 기반 추천
+        query = (
+            build_base_article_query()
             .join(ArticleRecommend.keywords)
-            .options(
-                selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
-            )
+            .options(selectinload(Article.recommend).selectinload(ArticleRecommend.keywords))
             .where(ArticleRecommendKeyword.keyword == category_name)
-            .where(ArticleRecommend.status == 'COMPLETED')
             .order_by(Article.publish_date.desc())
             .limit(limit)
         )
-        result = await db.execute(llm_query)
+        result = await db.execute(query)
         articles = result.scalars().unique().all()
 
         if not articles:
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"'{category_name}' 카테고리에 맞는 기사가 없습니다."
             )
 
-        # 5개 미만이면 랜덤 뉴스로 채우기
         articles = await fill_with_random_articles(db, list(articles), target_count=limit)
         return articles
-
     else:
-        # 3. (SBERT 로직) 10개 초과: 유사도 기반 + 카테고리 필터링
-        print(f"User {user_id}: SBERT 기반 '{category_name}' 카테고리 추천 (읽은 기사 {read_count}개)")
-
-        # 충분한 양의 유사 기사 조회
+        # Warm Start: SBERT 유사도 기반 + 카테고리 필터링
         similar_article_ids = await analysis_service.find_similar_documents_by_user(
             db, user_id, top_k=limit * 5
         )
@@ -341,19 +323,14 @@ async def get_documents_by_categories(
                 detail="추천할 수 있는 유사 기사가 없습니다."
             )
 
-        # 유사 기사 중에서 해당 카테고리에 속하는 것만 필터링
-        sbert_query = (
-            select(Article)
-            .join(Article.recommend)
+        query = (
+            build_base_article_query()
             .join(ArticleRecommend.keywords)
-            .options(
-                selectinload(Article.recommend).selectinload(ArticleRecommend.keywords)
-            )
+            .options(selectinload(Article.recommend).selectinload(ArticleRecommend.keywords))
             .where(Article.id.in_(similar_article_ids))
             .where(ArticleRecommendKeyword.keyword == category_name)
-            .where(ArticleRecommend.status == 'COMPLETED')
         )
-        result = await db.execute(sbert_query)
+        result = await db.execute(query)
         articles = result.scalars().unique().all()
 
         if not articles:
@@ -362,21 +339,15 @@ async def get_documents_by_categories(
                 detail=f"'{category_name}' 카테고리에 맞는 유사 기사가 없습니다."
             )
 
-        # 기사 ID를 키로 하는 맵 생성
+        # 유사도 순서 유지
         article_map = {article.id: article for article in articles}
-
-        # 유사도 순서를 유지하면서 정렬
         ordered_articles = [
-            article_map[article_id] 
-            for article_id in similar_article_ids
-            if article_id in article_map
-        ]
+            article_map[aid] for aid in similar_article_ids if aid in article_map
+        ][:limit]
 
-        # limit 개수만큼만 반환
-        ordered_articles = ordered_articles[:limit]
-        
-        # 5개 미만이면 랜덤 뉴스로 채우기
-        ordered_articles = await fill_with_random_articles(db, ordered_articles, target_count=limit)
+        ordered_articles = await fill_with_random_articles(
+            db, ordered_articles, target_count=limit
+        )
         return ordered_articles
 
 @recommend_router.get(
@@ -385,80 +356,59 @@ async def get_documents_by_categories(
     summary="[메인 추천] 사용자 맞춤형 기사 추천 (LLM/SBERT 자동 전환)"
 )
 async def get_user_recommendations(
-    user_id: int, 
-    limit: int = 5, 
+    user_id: int,
+    limit: int = DEFAULT_RECOMMENDATION_LIMIT,
     db: AsyncSession = Depends(get_db)
 ):
-    # 1. 사용자가 읽은 기사 수 확인
-    count_query = select(func.count(UserRecentArticle.id)).where(UserRecentArticle.user_id == user_id)
-    read_count = (await db.execute(count_query)).scalar_one_or_none() or 0
+    read_count = await get_user_read_count(db, user_id)
 
-    if read_count <= 10:
-        # 2. (LLM 로직) Cold Start
-        pref_query = select(UserCategory.user_category).where(UserCategory.user_id == user_id)
+    if read_count <= COLD_START_THRESHOLD:
+        # Cold Start: 사용자 선호 카테고리 기반 추천
+        pref_query = select(UserCategory.user_category).where(
+            UserCategory.user_id == user_id
+        )
         user_categories = (await db.execute(pref_query)).scalars().all()
-        
+
         if not user_categories:
-            raise HTTPException(status_code=404, detail="사용자의 선호 카테고리 정보를 찾을 수 없습니다.")
-        
-        llm_query = select(Article).join(Article.recommend).join(ArticleRecommend.keywords)\
-                    .where(ArticleRecommendKeyword.keyword.in_(user_categories))\
-                    .where(ArticleRecommend.status == 'COMPLETED')\
-                    .where(ArticleRecommend.bias_label != 'BIASED')\
-                    .order_by(Article.publish_date.desc()).limit(limit)
-        result = await db.execute(llm_query)
+            raise HTTPException(
+                status_code=404,
+                detail="사용자의 선호 카테고리 정보를 찾을 수 없습니다."
+            )
+
+        query = (
+            build_base_article_query()
+            .join(ArticleRecommend.keywords)
+            .where(ArticleRecommendKeyword.keyword.in_(user_categories))
+            .order_by(Article.publish_date.desc())
+            .limit(limit)
+        )
+        result = await db.execute(query)
         articles = result.scalars().unique().all()
-        
-        # 5개 미만이면 랜덤 뉴스로 채우기
+
         articles = await fill_with_random_articles(db, list(articles), target_count=limit)
         return articles
     else:
-        # 3. (SBERT 로직) Warm Start
-        similar_article_ids = await analysis_service.find_similar_documents_by_user(db, user_id, top_k=limit)
-        if not similar_article_ids: return []
-        
-        # SBERT 추천 결과에서도 편향된 기사는 제외
-        sbert_query = select(Article).join(Article.recommend)\
-                      .where(Article.id.in_(similar_article_ids))\
-                      .where(ArticleRecommend.bias_label != 'BIASED')
+        # Warm Start: SBERT 유사도 기반 추천
+        similar_article_ids = await analysis_service.find_similar_documents_by_user(
+            db, user_id, top_k=limit
+        )
+        if not similar_article_ids:
+            return []
 
-        result = await db.execute(sbert_query)
+        query = (
+            build_base_article_query()
+            .where(Article.id.in_(similar_article_ids))
+        )
+        result = await db.execute(query)
         articles = result.scalars().all()
-        
+
+        # 유사도 순서 유지
         article_map = {article.id: article for article in articles}
         ordered_articles = [
             article_map[aid] for aid in similar_article_ids if aid in article_map
         ]
-        
-        # 5개 미만이면 랜덤 뉴스로 채우기
-        ordered_articles = await fill_with_random_articles(db, ordered_articles, target_count=limit)
-        return ordered_articles
 
-@recommend_router.get(
-    "/politics/neutral", 
-    response_model=List[ArticleResponse],
-    summary="[정치] 중립적인 뉴스 추천"
-)
-async def get_neutral_political_news(limit: int = 10, db: AsyncSession = Depends(get_db)):
-    query = (
-        select(Article)
-        .join(Article.recommend)
-        .join(ArticleRecommend.keywords)
-        .where(ArticleRecommendKeyword.keyword == "정치")     
-        .where(ArticleRecommend.bias_label == "NEUTRAL")     
-        .where(ArticleRecommend.status == 'COMPLETED')      
-        .order_by(Article.publish_date.desc())
-        .limit(limit)
-    )
-    result = await db.execute(query)
-    articles = result.scalars().unique().all()
-    
-    if not articles:
-        raise HTTPException(status_code=404, detail="중립적인 정치 뉴스가 없습니다.")
-    
-    # 5개 미만이면 랜덤 뉴스로 채우기 (정치 카테고리 제한 없이)
-    if len(articles) < 5:
-        # 정치 카테고리 뉴스가 부족하면 일반 랜덤 뉴스로 채우기
-        articles = await fill_with_random_articles(db, list(articles), target_count=5)
-        
-    return articles
+        ordered_articles = await fill_with_random_articles(
+            db, ordered_articles, target_count=limit
+        )
+        return ordered_articles

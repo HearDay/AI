@@ -5,7 +5,9 @@ from sqlalchemy.orm import joinedload, Session, selectinload
 from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.sql import text
 import asyncio
+import random
 
 # DB 및 모델 임포트
 from app.core.database import get_db, SessionLocal, SessionLocalSync
@@ -34,6 +36,38 @@ class ArticleResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+# --- 랜덤 뉴스 보완 헬퍼 함수 ---
+async def fill_with_random_articles(
+    db: AsyncSession,
+    existing_articles: List[Article],
+    target_count: int = 5
+) -> List[Article]:
+    """
+    추천 뉴스가 target_count 미만일 때 랜덤 뉴스로 채워서 반환
+    """
+    existing_ids = {article.id for article in existing_articles}
+    needed_count = target_count - len(existing_articles)
+    
+    if needed_count <= 0:
+        return existing_articles
+    
+    # 랜덤 뉴스 조회 (기존 추천 제외, COMPLETED 상태, BIASED 아님)
+    random_query = (
+        select(Article)
+        .join(Article.recommend)
+        .where(ArticleRecommend.status == 'COMPLETED')
+        .where(ArticleRecommend.bias_label != 'BIASED')
+        .where(~Article.id.in_(existing_ids) if existing_ids else True)
+        .order_by(text("RAND()"))  # MySQL의 RAND() 함수 사용
+        .limit(needed_count)
+    )
+    
+    result = await db.execute(random_query)
+    random_articles = result.scalars().all()
+    
+    # 기존 추천 + 랜덤 뉴스 합치기
+    return list(existing_articles) + list(random_articles)
 
 # --- 백그라운드 작업 헬퍼 함수 (동기) ---
 
@@ -242,6 +276,9 @@ async def get_similar_articles(
 
     result = await db.execute(query)
     articles = result.scalars().all()
+    
+    # 5개 미만이면 랜덤 뉴스로 채우기
+    articles = await fill_with_random_articles(db, list(articles), target_count=5)
         
     return articles
 
@@ -286,6 +323,8 @@ async def get_documents_by_categories(
                 detail=f"'{category_name}' 카테고리에 맞는 기사가 없습니다."
             )
 
+        # 5개 미만이면 랜덤 뉴스로 채우기
+        articles = await fill_with_random_articles(db, list(articles), target_count=limit)
         return articles
 
     else:
@@ -334,7 +373,11 @@ async def get_documents_by_categories(
         ]
 
         # limit 개수만큼만 반환
-        return ordered_articles[:limit]
+        ordered_articles = ordered_articles[:limit]
+        
+        # 5개 미만이면 랜덤 뉴스로 채우기
+        ordered_articles = await fill_with_random_articles(db, ordered_articles, target_count=limit)
+        return ordered_articles
 
 @recommend_router.get(
     "/users/{user_id}/recommendations", 
@@ -364,7 +407,11 @@ async def get_user_recommendations(
                     .where(ArticleRecommend.bias_label != 'BIASED')\
                     .order_by(Article.publish_date.desc()).limit(limit)
         result = await db.execute(llm_query)
-        return result.scalars().unique().all()
+        articles = result.scalars().unique().all()
+        
+        # 5개 미만이면 랜덤 뉴스로 채우기
+        articles = await fill_with_random_articles(db, list(articles), target_count=limit)
+        return articles
     else:
         # 3. (SBERT 로직) Warm Start
         similar_article_ids = await analysis_service.find_similar_documents_by_user(db, user_id, top_k=limit)
@@ -382,6 +429,9 @@ async def get_user_recommendations(
         ordered_articles = [
             article_map[aid] for aid in similar_article_ids if aid in article_map
         ]
+        
+        # 5개 미만이면 랜덤 뉴스로 채우기
+        ordered_articles = await fill_with_random_articles(db, ordered_articles, target_count=limit)
         return ordered_articles
 
 @recommend_router.get(
@@ -405,5 +455,10 @@ async def get_neutral_political_news(limit: int = 10, db: AsyncSession = Depends
     
     if not articles:
         raise HTTPException(status_code=404, detail="중립적인 정치 뉴스가 없습니다.")
+    
+    # 5개 미만이면 랜덤 뉴스로 채우기 (정치 카테고리 제한 없이)
+    if len(articles) < 5:
+        # 정치 카테고리 뉴스가 부족하면 일반 랜덤 뉴스로 채우기
+        articles = await fill_with_random_articles(db, list(articles), target_count=5)
         
     return articles

@@ -39,10 +39,24 @@ class ArticleResponse(BaseModel):
 
 async def get_user_read_count(db: AsyncSession, user_id: int) -> int:
     """사용자가 읽은 기사 수 조회"""
-    count_query = select(func.count(UserRecentArticle.id)).where(
-        UserRecentArticle.user_id == user_id
-    )
-    return (await db.execute(count_query)).scalar_one_or_none() or 0
+    try:
+        count_query = select(func.count(UserRecentArticle.id)).where(
+            UserRecentArticle.user_id == user_id
+        )
+        result = await db.execute(count_query)
+        return result.scalar_one_or_none() or 0
+    except Exception as e:
+        # 연결 문제 발생 시 재시도
+        print(f"[Warning] get_user_read_count 오류 발생, 재시도: {e}")
+        try:
+            # 세션 새로고침 후 재시도
+            await db.rollback()
+            result = await db.execute(count_query)
+            return result.scalar_one_or_none() or 0
+        except Exception as retry_error:
+            print(f"[Error] get_user_read_count 재시도 실패: {retry_error}")
+            # 최종 실패 시 기본값 반환
+            return 0
 
 
 def build_base_article_query():
@@ -58,7 +72,8 @@ def build_base_article_query():
 async def fill_with_random_articles(
     db: AsyncSession,
     existing_articles: List[Article],
-    target_count: int = DEFAULT_RECOMMENDATION_LIMIT
+    target_count: int = DEFAULT_RECOMMENDATION_LIMIT,
+    category_name: Optional[str] = None
 ) -> List[Article]:
     """추천 뉴스가 target_count 미만일 때 랜덤 뉴스로 채워서 반환"""
     existing_ids = {article.id for article in existing_articles}
@@ -67,8 +82,18 @@ async def fill_with_random_articles(
     if needed_count <= 0:
         return existing_articles
     
+    # 카테고리 지정 시 해당 카테고리 기사만 조회
+    random_query = build_base_article_query()
+    
+    if category_name:
+        random_query = (
+            random_query
+            .join(ArticleRecommend.keywords)
+            .where(ArticleRecommendKeyword.keyword == category_name)
+        )
+    
     random_query = (
-        build_base_article_query()
+        random_query
         .where(~Article.id.in_(existing_ids) if existing_ids else True)
         .order_by(text("RAND()"))
         .limit(needed_count)
@@ -78,6 +103,23 @@ async def fill_with_random_articles(
     random_articles = result.scalars().all()
     
     return list(existing_articles) + list(random_articles)
+
+
+async def get_random_category_articles(
+    db: AsyncSession,
+    category_name: str,
+    limit: int = DEFAULT_RECOMMENDATION_LIMIT
+) -> List[Article]:
+    """특정 카테고리의 랜덤 기사 조회"""
+    query = (
+        build_base_article_query()
+        .join(ArticleRecommend.keywords)
+        .where(ArticleRecommendKeyword.keyword == category_name)
+        .order_by(text("RAND()"))
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return list(result.scalars().unique().all())
 
 # --- 백그라운드 작업 헬퍼 함수 (동기) ---
 
@@ -304,24 +346,31 @@ async def get_documents_by_categories(
         result = await db.execute(query)
         articles = result.scalars().unique().all()
 
+        # 기사가 없으면 랜덤으로 해당 카테고리 기사 조회
         if not articles:
-            raise HTTPException(
-                status_code=404,
-                detail=f"'{category_name}' 카테고리에 맞는 기사가 없습니다."
-            )
+            articles = await get_random_category_articles(db, category_name, limit)
+            if not articles:
+                # 그래도 없으면 일반 랜덤 기사로 채움
+                articles = await fill_with_random_articles(db, [], target_count=limit)
+            return articles
 
-        articles = await fill_with_random_articles(db, list(articles), target_count=limit)
+        articles = await fill_with_random_articles(
+            db, list(articles), target_count=limit, category_name=category_name
+        )
         return articles
     else:
         # Warm Start: SBERT 유사도 기반 + 카테고리 필터링
         similar_article_ids = await analysis_service.find_similar_documents_by_user(
             db, user_id, top_k=limit * 5
         )
+        
+        # 유사 기사가 없으면 랜덤으로 해당 카테고리 기사 조회
         if not similar_article_ids:
-            raise HTTPException(
-                status_code=404,
-                detail="추천할 수 있는 유사 기사가 없습니다."
-            )
+            articles = await get_random_category_articles(db, category_name, limit)
+            if not articles:
+                # 그래도 없으면 일반 랜덤 기사로 채움
+                articles = await fill_with_random_articles(db, [], target_count=limit)
+            return articles
 
         query = (
             build_base_article_query()
@@ -333,11 +382,13 @@ async def get_documents_by_categories(
         result = await db.execute(query)
         articles = result.scalars().unique().all()
 
+        # 카테고리 필터링 후 기사가 없으면 랜덤으로 해당 카테고리 기사 조회
         if not articles:
-            raise HTTPException(
-                status_code=404,
-                detail=f"'{category_name}' 카테고리에 맞는 유사 기사가 없습니다."
-            )
+            articles = await get_random_category_articles(db, category_name, limit)
+            if not articles:
+                # 그래도 없으면 일반 랜덤 기사로 채움
+                articles = await fill_with_random_articles(db, [], target_count=limit)
+            return articles
 
         # 유사도 순서 유지
         article_map = {article.id: article for article in articles}
@@ -346,7 +397,7 @@ async def get_documents_by_categories(
         ][:limit]
 
         ordered_articles = await fill_with_random_articles(
-            db, ordered_articles, target_count=limit
+            db, ordered_articles, target_count=limit, category_name=category_name
         )
         return ordered_articles
 

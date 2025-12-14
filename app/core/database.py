@@ -23,7 +23,15 @@ ASYNC_DATABASE_URL = (
     f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
     f"?charset=utf8mb4"
 )
-engine = create_async_engine(ASYNC_DATABASE_URL, echo=True, pool_pre_ping=True)
+engine = create_async_engine(
+    ASYNC_DATABASE_URL,
+    echo=True,
+    pool_pre_ping=True,  
+    pool_recycle=3600,   
+    pool_size=10,        
+    max_overflow=20,     
+    pool_timeout=30      
+)
 SessionLocal = sessionmaker(
     autocommit=False, 
     autoflush=False, 
@@ -53,5 +61,13 @@ Base = declarative_base()
 
 # 비동기 세션 주입 (API용 Dependency)
 async def get_db():
+    """데이터베이스 세션 의존성 주입"""
     async with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()

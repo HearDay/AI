@@ -29,7 +29,7 @@ DEFAULT_RECOMMENDATION_LIMIT = 5  # 기본 추천 개수
 class ArticleResponse(BaseModel):
     id: int
     title: str
-    origin_url: Optional[str] = None
+    origin_link: Optional[str] = None
     image_url: Optional[str] = None
     
     class Config:

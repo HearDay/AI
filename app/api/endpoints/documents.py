@@ -29,14 +29,21 @@ DEFAULT_RECOMMENDATION_LIMIT = 5  # 기본 추천 개수
 class ArticleResponse(BaseModel):
     id: int
     title: str
-    origin_link: str
+    origin_url: Optional[str] = None
     image_url: Optional[str] = None
     
     class Config:
         from_attributes = True
 
-# --- 추천 헬퍼 함수들 ---
-
+def to_article_response(article: Article) -> ArticleResponse:
+    return ArticleResponse(
+        id=article.id,
+        title=article.title,
+        origin_link=article.description,
+        image_url=article.image_url
+    )
+    
+# 추천 헬퍼 함수들
 async def get_user_read_count(db: AsyncSession, user_id: int) -> int:
     """사용자가 읽은 기사 수 조회"""
     try:
@@ -318,7 +325,7 @@ async def get_similar_articles(
     articles = await fill_with_random_articles(
         db, list(articles), target_count=DEFAULT_RECOMMENDATION_LIMIT
     )
-    return articles
+    return [to_article_response(a) for a in articles]
 
 @recommend_router.get(
     "/users/{user_id}/recommendations/category/{category_name}", 
@@ -352,12 +359,12 @@ async def get_documents_by_categories(
             if not articles:
                 # 그래도 없으면 일반 랜덤 기사로 채움
                 articles = await fill_with_random_articles(db, [], target_count=limit)
-            return articles
+            return [to_article_response(a) for a in articles]
 
         articles = await fill_with_random_articles(
             db, list(articles), target_count=limit, category_name=category_name
         )
-        return articles
+        return [to_article_response(a) for a in articles]
     else:
         # Warm Start: SBERT 유사도 기반 + 카테고리 필터링
         similar_article_ids = await analysis_service.find_similar_documents_by_user(
@@ -370,7 +377,7 @@ async def get_documents_by_categories(
             if not articles:
                 # 그래도 없으면 일반 랜덤 기사로 채움
                 articles = await fill_with_random_articles(db, [], target_count=limit)
-            return articles
+            return [to_article_response(a) for a in articles]
 
         query = (
             build_base_article_query()
@@ -388,7 +395,7 @@ async def get_documents_by_categories(
             if not articles:
                 # 그래도 없으면 일반 랜덤 기사로 채움
                 articles = await fill_with_random_articles(db, [], target_count=limit)
-            return articles
+            return [to_article_response(a) for a in articles]
 
         # 유사도 순서 유지
         article_map = {article.id: article for article in articles}
@@ -399,7 +406,7 @@ async def get_documents_by_categories(
         ordered_articles = await fill_with_random_articles(
             db, ordered_articles, target_count=limit, category_name=category_name
         )
-        return ordered_articles
+        return [to_article_response(a) for a in articles]
 
 @recommend_router.get(
     "/users/{user_id}/recommendations", 
@@ -437,7 +444,7 @@ async def get_user_recommendations(
         articles = result.scalars().unique().all()
 
         articles = await fill_with_random_articles(db, list(articles), target_count=limit)
-        return articles
+        return [to_article_response(a) for a in articles]
     else:
         # Warm Start: SBERT 유사도 기반 추천
         similar_article_ids = await analysis_service.find_similar_documents_by_user(
@@ -462,4 +469,4 @@ async def get_user_recommendations(
         ordered_articles = await fill_with_random_articles(
             db, ordered_articles, target_count=limit
         )
-        return ordered_articles
+        return [to_article_response(a) for a in articles]

@@ -420,8 +420,11 @@ async def get_user_recommendations(
 ):
     read_count = await get_user_read_count(db, user_id)
 
+    # 최종적으로 반환할 기사 목록을 담을 변수
+    final_articles = []
+
     if read_count <= COLD_START_THRESHOLD:
-        # Cold Start: 사용자 선호 카테고리 기반 추천
+        # [Cold Start] 사용자 선호 카테고리 기반 추천
         pref_query = select(UserCategory.user_category).where(
             UserCategory.user_id == user_id
         )
@@ -441,32 +444,30 @@ async def get_user_recommendations(
             .limit(limit)
         )
         result = await db.execute(query)
-        articles = result.scalars().unique().all()
+        final_articles = result.scalars().unique().all()
 
-        articles = await fill_with_random_articles(db, list(articles), target_count=limit)
-        return [to_article_response(a) for a in articles]
     else:
-        # Warm Start: SBERT 유사도 기반 추천
         similar_article_ids = await analysis_service.find_similar_documents_by_user(
             db, user_id, top_k=limit
         )
-        if not similar_article_ids:
-            return []
+        
+        # 수정된 부분: 유사한 기사가 있는 경우에만 DB 조회
+        if similar_article_ids:
+            query = (
+                build_base_article_query()
+                .where(Article.id.in_(similar_article_ids))
+            )
+            result = await db.execute(query)
+            fetched_articles = result.scalars().all()
 
-        query = (
-            build_base_article_query()
-            .where(Article.id.in_(similar_article_ids))
-        )
-        result = await db.execute(query)
-        articles = result.scalars().all()
+            # 유사도 순서(similar_article_ids 순서)를 유지하며 리스트 구성
+            article_map = {article.id: article for article in fetched_articles}
+            for aid in similar_article_ids:
+                if aid in article_map:
+                    final_articles.append(article_map[aid])
 
-        # 유사도 순서 유지
-        article_map = {article.id: article for article in articles}
-        ordered_articles = [
-            article_map[aid] for aid in similar_article_ids if aid in article_map
-        ]
-
-        ordered_articles = await fill_with_random_articles(
-            db, ordered_articles, target_count=limit
-        )
-        return [to_article_response(a) for a in articles]
+    final_articles = await fill_with_random_articles(
+        db, list(final_articles), target_count=limit
+    )
+    
+    return [to_article_response(a) for a in final_articles]
